@@ -45,6 +45,8 @@ data class RuleEditorUiState(
     // In-app feature blocking
     val inAppReels: Boolean = false,
     val inAppShorts: Boolean = false,
+    // Explore has no detector; a HARD_BLOCK on it covers the Search screen's suggestion grid
+    // (`InstagramSurfaces.contentCovers`). It also round-trips a stored EXPLORE flag untouched.
     val inAppExplore: Boolean = false,
     val inAppTikTokFeed: Boolean = false,
     val supportsInAppBlocking: Boolean = false,
@@ -74,13 +76,11 @@ data class RuleEditorUiState(
     // (null = inherit the app-level mode), so dropping it here would silently downgrade a
     // website-only block back to "enforces nothing" whenever this editor saved.
     val webBlockMode: String? = null,
-    // Carried through for the same reason as [webDomains]: this editor has no UI for either, and
+    // Carried through for the same reason as [webDomains]: this editor has no UI for it, and
     // the rule it saves replaces the loaded one wholesale. Without the round trip, editing an
-    // Instagram rule here would silently re-enable a tab cover the user had switched off and
-    // silently switch off a Following steer they had turned on -- a preference lost to a save that
-    // never mentioned it.
+    // Instagram rule here would silently re-enable a tab cover the user had switched off --
+    // a preference lost to a save that never mentioned it.
     val tabVanish: Boolean = true,
-    val followingSteer: Boolean = false,
     // All rules for this package (for summary display)
     val allRulesForPackage: List<RuleSummary> = emptyList()
 )
@@ -165,8 +165,7 @@ class RuleEditorViewModel @Inject constructor(
                     showTimeRemaining = existing.showTimeRemaining,
                     webDomains = existing.webDomains,
                     webBlockMode = existing.webBlockMode,
-                    tabVanish = existing.tabVanish,
-                    followingSteer = existing.followingSteer
+                    tabVanish = existing.tabVanish
                 )
             }
         }
@@ -375,9 +374,9 @@ class RuleEditorViewModel @Inject constructor(
          *    has no web-domain UI, and before they were threaded through here every save from this
          *    screen silently wiped an app's web blocking (or, for `webBlockMode`, downgraded a
          *    website-only block to one that enforces nothing).
-         *  - `tabVanish` and `followingSteer` are carried through for exactly the same reason,
-         *    and were added to this list the day they were introduced rather than the day a user
-         *    reported the tab cover turning itself back on.
+         *  - `tabVanish` is carried through for exactly the same reason, and was added to this
+         *    list the day it was introduced rather than the day a user reported the tab cover
+         *    turning itself back on.
          */
         internal fun buildRule(state: RuleEditorUiState): BlockRule {
             val scheduleDaysStr = if (state.scheduleEnabled && state.scheduleDays.isNotEmpty()) {
@@ -430,7 +429,6 @@ class RuleEditorViewModel @Inject constructor(
                 webDomains = state.webDomains,
                 webBlockMode = state.webBlockMode,
                 tabVanish = state.tabVanish,
-                followingSteer = state.followingSteer,
                 autoKickAfterMinutes = if (state.autoKickEnabled) {
                     DurationInput.resolveMinutes(
                         state.autoKickAfterMinutesText,

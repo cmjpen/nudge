@@ -73,10 +73,14 @@ Nudge is open source, requests zero internet permissions, and keeps all your dat
 
 Block addictive feeds without blocking the whole app:
 - **YouTube Shorts** -- block the Shorts feed, keep everything else
-- **Instagram Reels/Explore** -- block the infinite scroll, keep DMs and posts
+- **Instagram Reels** -- block the Reels tab, the full-screen player, and the home feed below the story tray (the stories stay usable); DMs and profiles stay reachable
+- **Instagram Explore** -- a Hard Block on Explore covers the suggestion grid on the Search screen, so the search box itself stays usable; tapping into it to search shows no cover
 - **TikTok For You** -- block the algorithm, keep the app
 
-Uses Accessibility Service to detect in-app navigation to these screens.
+Uses Accessibility Service to detect in-app navigation to these screens. Instagram is detected from
+measured view IDs (the reel player's own containers, and the home feed's `title_logo` /
+`sticky_header_list` markers) -- never from bottom-nav tab selection, which current Instagram does
+not expose.
 
 ### Smart features
 
@@ -127,8 +131,8 @@ Requires: JDK 17+, Android SDK with platform 34 and build-tools 34.
 ```
 AccessibilityService detects foreground app change
   -> BlockEngine evaluates rules for that app
-  -> If in-app rules exist: InAppDetector inspects navigation state
-     (checks resource IDs + tab selection to identify Shorts/Reels/Explore)
+  -> If in-app rules exist: InAppDetector inspects the tree
+     (measured resource IDs for the Reels player and home feed; Shorts/feed containers)
   -> Decision: ALLOW | HARD_BLOCK | DELAY | BREATHING
   -> If blocked: full-screen overlay appears
   -> User can wait through the timer, or go back home
@@ -143,7 +147,7 @@ Nudge requires three permissions. Here's exactly what each does and why:
 
 | Permission | Why | What it sees |
 |-----------|-----|-------------|
-| **Accessibility Service** | Detects foreground app + in-app navigation (Shorts, Reels, Explore) | Package name of the foreground app, plus UI element IDs and selection state for in-app feature detection. Does **not** read arbitrary text, keystrokes, or notification content. See [privacy policy](PRIVACY.md) for details. |
+| **Accessibility Service** | Detects foreground app + in-app navigation (Shorts, Reels, TikTok feed) | Package name of the foreground app, plus UI element IDs for in-app feature detection. Does **not** read arbitrary text, keystrokes, or notification content. See [privacy policy](PRIVACY.md) for details. |
 | **Display Over Other Apps** | Shows the block/delay overlay on top of blocked apps | Nothing. It's a display permission. |
 | **Usage Stats** | Tracks your daily screen time per app for time budgets | App usage durations. Stored locally in a Room database on your device. |
 
@@ -168,7 +172,7 @@ No internet permission. No camera. No contacts. No location. No storage.
 
 - [x] App blocking (hard block, delay, breathing)
 - [x] Per-app daily time budgets & app groups
-- [x] In-app blocking (Reels, Shorts, Explore feeds)
+- [x] In-app blocking (Reels, Shorts, TikTok feed)
 - [x] Schedule-based rules (day-of-week + time-of-day)
 - [x] Interaction counter & auto-kick
 - [x] Usage stats dashboard with charts

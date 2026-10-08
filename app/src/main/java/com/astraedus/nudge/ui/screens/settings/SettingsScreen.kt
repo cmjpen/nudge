@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -48,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -117,11 +120,14 @@ fun SettingsScreen(
     val strictModeLength by preferences.strictModeChallengeLength.collectAsStateWithLifecycle(
         initialValue = StrictModeChallenge.DEFAULT_LENGTH
     )
-    val emergencyPassEnabled by preferences.emergencyPassEnabled.collectAsStateWithLifecycle(initialValue = true)
+    val emergencyPassEnabled by preferences.emergencyPassEnabled.collectAsStateWithLifecycle(initialValue = false)
     val coroutineScope = rememberCoroutineScope()
     var versionTapCount by rememberSaveable { mutableIntStateOf(0) }
     var developerOptionsVisible by rememberSaveable { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+    // Debug-only: the last host-app tree's view ids, shown so a screen with no committed fixture
+    // can be reported from the phone (see `SurfaceInspector`).
+    var surfaceReadout by remember { mutableStateOf<String?>(null) }
     // Strict Mode gates every protection-WEAKENING flip on this screen behind the unlock challenge.
     // One pending slot serves them all: the freshly generated target, the dialog prompt, and the
     // action to run once the user types it. Null = no dialog up.
@@ -536,6 +542,38 @@ fun SettingsScreen(
                         }
                     }
                 )
+
+                // Debug-only: the last host-app tree's view ids, for designing a selector against
+                // a screen no fixture covers (the Search/Explore screen, at the time of writing).
+                // Open Instagram on that screen, come back here, tap the row, and the ids are
+                // selectable text that can be copied or screenshotted. BuildConfig-guarded on the
+                // composable so the row does not exist in a release build.
+                if (BuildConfig.DEBUG) {
+                    ListItem(
+                        headlineContent = { Text("Last host-app surface") },
+                        supportingContent = {
+                            Text("View ids from the last Instagram tree read — for selector design")
+                        },
+                        leadingContent = { Icon(Icons.Outlined.Terminal, contentDescription = null) },
+                        modifier = Modifier.clickable {
+                            surfaceReadout = com.astraedus.nudge.service.SurfaceInspector.readout()
+                        }
+                    )
+                    surfaceReadout?.let { readout ->
+                        AlertDialog(
+                            onDismissRequest = { surfaceReadout = null },
+                            confirmButton = {
+                                TextButton(onClick = { surfaceReadout = null }) { Text("Close") }
+                            },
+                            title = { Text("Last host-app surface") },
+                            text = {
+                                SelectionContainer {
+                                    Text(readout, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        )
+                    }
+                }
 
                 // A widget cannot be placed on the launcher from adb: there is no `cmd appwidget
                 // add`, and `appwidget grantbind` only grants a permission Pixel Launcher already

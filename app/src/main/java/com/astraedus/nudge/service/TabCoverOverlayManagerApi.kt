@@ -11,27 +11,32 @@ import com.astraedus.nudge.domain.surfaces.TabCoverPlacement
  * nav-bar tab, so the icon disappears and the tap is eaten. It only ever exists behind a decision
  * that was already a hard block; DELAY / HOLD / BREATHING must leave the tab tappable, because the
  * tab is how the user reaches the interstitial.
+ *
+ * A host app may have **several** coverable tabs (Instagram's Reels and Search/Explore), so the
+ * manager is keyed by the feature key (`InAppDetector.Feature.key`) rather than being one window.
+ * Keys are supplied by the caller; this interface decides nothing.
  */
 interface TabCoverOverlayManagerApi {
 
-    /** True while a cover window is attached. */
+    /** True while at least one cover window is attached. */
     fun isVisible(): Boolean
 
-    /** The package the current cover was drawn over, or null when no cover is up. */
+    /** The package any attached cover was drawn over, or null when none is up. */
     fun coveredPackage(): String?
 
     /**
-     * Where the cover currently is, or null when none is up.
+     * Where the cover for [featureKey] currently is, or null when that cover is not up.
      *
      * Exists so [com.astraedus.nudge.domain.surfaces.TabCoverDecider] can tell "already exactly
      * there, leave it alone" from "the tab moved, reposition" without the manager holding any
      * policy, and without the caller keeping a second copy of "is a cover up" that could disagree
-     * with this one. Non-null exactly when [isVisible] is true.
+     * with this one. Non-null exactly when a cover for that key is attached.
      */
-    fun shownPlacement(): TabCoverPlacement?
+    fun shownPlacement(featureKey: String): TabCoverPlacement?
 
     /**
-     * Apply an already-DECIDED effect for [packageName]. Safe to call on every content change.
+     * Apply an already-DECIDED effect for [featureKey] over [packageName]. Safe to call on every
+     * content change.
      *
      * This method decides nothing: [TabCoverEffect] comes from the pure layer, which has already
      * weighed the block decision, the surface classification and the node bounds. All that happens
@@ -43,18 +48,24 @@ interface TabCoverOverlayManagerApi {
      *   `contentDescription`. Passed in for the same reason as [color]: the feature word belongs to
      *   the caller and the adapter, never to this class.
      */
-    fun apply(packageName: String, effect: TabCoverEffect, color: Int, label: String)
+    fun apply(
+        featureKey: String,
+        packageName: String,
+        effect: TabCoverEffect,
+        color: Int,
+        label: String
+    )
 
-    /** Remove the cover window if one is attached. Idempotent. */
+    /** Remove every cover window. Idempotent. */
     fun hide()
 
     /**
-     * Tear down when the classification says the user is no longer in the covered app.
+     * Tear down the covers the classification says the user is no longer over.
      *
-     * The whole decision belongs to `TabCoverPresence.shouldKeep`; this exists so the service has
-     * one call to make from `applyForegroundSignal` — the single place that sees every
-     * classification above every early return — instead of six teardown sites that disagree about
-     * what "the user left" means.
+     * The whole decision belongs to `TabCoverPresence.shouldKeep`, applied per cover; this exists so
+     * the service has one call to make from `applyForegroundSignal` — the single place that sees
+     * every classification above every early return — instead of six teardown sites that disagree
+     * about what "the user left" means.
      */
     fun onForegroundSignal(signal: ForegroundSignal)
 }

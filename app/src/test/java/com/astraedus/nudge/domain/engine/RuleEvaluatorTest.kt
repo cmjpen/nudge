@@ -101,23 +101,22 @@ class RuleEvaluatorTest {
     }
 
     @Test
-    fun `tabVanish and followingSteer survive the entity-to-ActiveRule mapping`() {
+    fun `tabVanish survives the entity-to-ActiveRule mapping`() {
         val rules = listOf(
             BlockRuleData(
                 id = 1, packageName = "com.instagram.android", groupId = null,
                 mode = BlockMode.HARD_BLOCK, delaySeconds = 0,
                 dailyLimitMinutes = null, enabled = true,
-                tabVanish = false, followingSteer = true
+                tabVanish = false
             )
         )
         val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, emptyList())
         assertEquals(1, result.size)
         assertFalse(result[0].tabVanish)
-        assertTrue(result[0].followingSteer)
     }
 
     @Test
-    fun `tabVanish and followingSteer default to on and off respectively`() {
+    fun `tabVanish defaults to on`() {
         val rules = listOf(
             BlockRuleData(
                 id = 1, packageName = "com.instagram.android", groupId = null,
@@ -127,6 +126,5 @@ class RuleEvaluatorTest {
         )
         val result = evaluator.resolveRulesForPackage("com.instagram.android", rules, emptyList())
         assertTrue(result[0].tabVanish)
-        assertFalse(result[0].followingSteer)
     }
 }

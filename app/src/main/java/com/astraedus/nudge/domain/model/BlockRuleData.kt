@@ -15,7 +15,5 @@ data class BlockRuleData(
     val grayscale: Boolean = false,
     val webDomains: String? = null,             // comma-separated: "instagram.com,www.instagram.com"
     /** See [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish]. */
-    val tabVanish: Boolean = true,
-    /** See [com.astraedus.nudge.data.db.entity.BlockRule.followingSteer]. */
-    val followingSteer: Boolean = false
+    val tabVanish: Boolean = true
 )

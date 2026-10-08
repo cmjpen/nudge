@@ -120,13 +120,13 @@ class SurfaceFixturePrivacyTest {
         }
     }
 
-    /** The three labels production reasons about must be allowlisted, or scrubbing breaks the feature. */
+    /** The chrome labels the adapter declares must be allowlisted, or scrubbing breaks the feature. */
     @Test
     fun `the labels production reads are allowlisted`() {
         listOf(
-            InstagramSurfaces.LABEL_FOLLOWING,
             InstagramSurfaces.DESC_HOME_FEED,
-            InstagramSurfaces.DESC_REELS_TAB
+            InstagramSurfaces.DESC_REELS_TAB,
+            InstagramSurfaces.DESC_SEARCH_TAB
         ).forEach { label ->
             assertTrue(
                 "production reads '$label' but the scrubber would blank it, so no fixture could " +

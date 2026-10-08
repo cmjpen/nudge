@@ -103,28 +103,16 @@ class PlatformSurfacesRegistryTest {
     fun `every locator's view ids belong to the adapter's own package`() {
         PlatformSurfacesRegistry.adapters.forEach { adapter ->
             val prefix = "${adapter.packageName}:id/"
-            val locators = adapter.vanishableTabs.values + listOfNotNull(
-                adapter.followingSteer?.entryPoint,
-                adapter.followingSteer?.menuItem,
-                adapter.followingSteer?.menuItemLabel,
-                adapter.titleLocator
-            )
+            val locators = adapter.vanishableTabs.values +
+                adapter.activeTabs.values + adapter.contentCovers.flatMap {
+                    listOfNotNull(it.value.top, it.value.topFallback, it.value.bottom)
+                }
             locators.flatMap { it.viewIds }.forEach { id ->
                 assertTrue(
                     "${adapter.packageName} declares a locator for '$id', which belongs to another app",
                     id.startsWith(prefix)
                 )
             }
-        }
-    }
-
-    /** A steer recipe with an unmatchable step could never complete; better to declare none. */
-    @Test
-    fun `every declared steer recipe has three usable steps`() {
-        PlatformSurfacesRegistry.adapters.mapNotNull { it.followingSteer }.forEach { recipe ->
-            assertFalse("the steer entry point must be findable", recipe.entryPoint.isEmpty)
-            assertFalse("the steer menu row must be findable", recipe.menuItem.isEmpty)
-            assertFalse("the steer menu label must be findable", recipe.menuItemLabel.isEmpty)
         }
     }
 
@@ -178,40 +166,47 @@ class PlatformSurfacesRegistryTest {
     }
 
     /**
-     * An adapter that declares a steer must also declare a title locator.
-     *
-     * Without one, nothing can positively identify the steer's DESTINATION, so the once-per-arrival
-     * memory is never marked from it and a user who backs out of that feed gets steered again. The two
-     * belong together, and a future adapter shipping one without the other fails here.
+     * Region covers are keyed the same way tab covers are, for the same reason: a typo would make
+     * the cover silently never fire. Derived from the production enum, per rule (b).
      */
     @Test
-    fun `every adapter that declares a steer also declares where its title lives`() {
-        PlatformSurfacesRegistry.adapters.filter { it.followingSteer != null }.forEach { adapter ->
-            val title = adapter.titleLocator
-            assertNotNull(
-                "${adapter.packageName} declares a steer but no titleLocator, so its destination " +
-                    "screen can never be recognised and the steer would repeat",
-                title
-            )
-            assertTrue(
-                "${adapter.packageName}'s titleLocator must be keyed on a view id",
-                title!!.viewIds.isNotEmpty()
-            )
+    fun `every content cover key is a real in-app feature key`() {
+        val featureKeys = com.astraedus.nudge.service.InAppDetector.Feature.entries.map { it.key }.toSet()
+        PlatformSurfacesRegistry.adapters.forEach { adapter ->
+            adapter.contentCovers.keys.forEach { key ->
+                assertTrue(
+                    "'$key' is not an InAppDetector.Feature key ($featureKeys) — the region cover " +
+                        "would never match a blocked feature",
+                    key in featureKeys
+                )
+            }
         }
     }
 
     /**
-     * A title locator matched on TEXT would find the dropdown row named "Following" on the Home feed,
-     * and the classifier would then read an open menu as the destination screen. Ids only.
+     * The active-tab signal is two halves that only work together: a set of tab locators and the id
+     * of the selected child that marks one. An adapter publishing tabs without the indicator would
+     * have a gate that can never be true.
      */
     @Test
-    fun `no title locator matches on text or content description`() {
-        PlatformSurfacesRegistry.adapters.mapNotNull { it.titleLocator }.forEach { title ->
-            assertEquals(
-                "a title locator matching on text would confuse a menu row with the screen it opens",
-                emptyList<String>(),
-                title.texts + title.contentDescriptions
+    fun `every adapter that exposes active tabs publishes both halves of the signal`() {
+        PlatformSurfacesRegistry.adapters.forEach { adapter ->
+            if (adapter.activeTabs.isEmpty()) return@forEach
+            assertNotNull(
+                "${adapter.packageName} declares active tabs but no activeTabIndicatorId, so the " +
+                    "active tab can never be found",
+                adapter.activeTabIndicatorId
             )
+            assertTrue(
+                "${adapter.packageName}'s activeTabIndicatorId must be a resource id",
+                adapter.activeTabIndicatorId!!.contains(":id/")
+            )
+            adapter.activeTabs.forEach { (key, locator) ->
+                assertTrue(
+                    "${adapter.packageName}'s active tab '$key' must be keyed on a view id",
+                    locator.viewIds.isNotEmpty()
+                )
+            }
         }
     }
 

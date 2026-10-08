@@ -656,6 +656,7 @@ fun UnifiedAppConfigScreen(
                 state.availableFeatures.forEach { feature ->
                     FeatureOverrideCard(
                         featureName = feature.displayName,
+                        featureDescription = feature.description,
                         override = state.featureOverrides[feature.key] ?: FeatureOverride(),
                         onUpdate = { viewModel.setFeatureOverride(feature.key, it) }
                     )
@@ -666,16 +667,18 @@ fun UnifiedAppConfigScreen(
                 // than merely refusing to open. Visibility asks the registry (supportsTabVanish),
                 // never a hardcoded package check.
                 if (state.supportsTabVanish) {
-                    val vanishLabel = state.vanishableFeatureLabel ?: "Reels"
+                    val vanishLabel = state.vanishableFeatureLabels
+                        .joinToString(" and ")
+                        .ifBlank { "the feature" }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Hide the $vanishLabel tab", style = MaterialTheme.typography.bodyLarge)
+                            Text("Hide blocked tabs in the bottom bar", style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                "While $vanishLabel is blocked, Nudge covers the $vanishLabel tab in " +
+                                "While $vanishLabel is hard-blocked, Nudge covers the matching tab in " +
                                     "Instagram's bottom bar, so the icon is not there and tapping it does " +
                                     "nothing. The rest of Instagram works as normal.",
                                 style = MaterialTheme.typography.bodySmall,
@@ -685,35 +688,6 @@ fun UnifiedAppConfigScreen(
                         Switch(
                             checked = state.tabVanish,
                             onCheckedChange = viewModel::setTabVanish
-                        )
-                    }
-                }
-
-                // Following steer -- experimental, default off. Opens Instagram's Following feed
-                // instead of Home. Visibility asks the registry (supportsFollowingSteer).
-                if (state.supportsFollowingSteer) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Open to Following instead of Home",
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Text(
-                                "Experimental. When you open Instagram's home feed, Nudge switches it to " +
-                                    "Following, so you see posts from people you follow rather than " +
-                                    "suggested ones. You can switch back at any time. If Instagram changes " +
-                                    "its layout this quietly stops working.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = state.followingSteer,
-                            onCheckedChange = viewModel::setFollowingSteer
                         )
                     }
                 }
@@ -846,6 +820,7 @@ fun UnifiedAppConfigScreen(
                         state.availableFeatures.forEach { feature ->
                             FeatureOverrideCard(
                                 featureName = feature.displayName,
+                                featureDescription = feature.description,
                                 override = state.scheduledFeatureOverrides[feature.key]
                                     ?: FeatureOverride(),
                                 onUpdate = { viewModel.setScheduledFeatureOverride(feature.key, it) }
@@ -952,6 +927,7 @@ private fun InfoButton(explanation: String) {
 @Composable
 private fun FeatureOverrideCard(
     featureName: String,
+    featureDescription: String?,
     override: FeatureOverride,
     onUpdate: (FeatureOverride) -> Unit
 ) {
@@ -970,6 +946,17 @@ private fun FeatureOverrideCard(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium
             )
+
+            // What the feature actually covers, when the name alone does not say it (an Explore
+            // hard block also covers the Search page's suggestion grid). Say it in the settings,
+            // not only in the editor's info dialog -- the user configuring the feature is here.
+            if (featureDescription != null) {
+                Text(
+                    featureDescription,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             // Mode selector
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

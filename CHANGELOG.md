@@ -4,6 +4,68 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- **The daily 2-minute pass is now OFF by default.** It is an opt-in escape hatch: enable it in
+  Settings if you want one 2-minute window per day. Existing installs keep whatever they had set;
+  the pass's lockout ledger is untouched.
+
+### Added
+- **Content covers: Instagram's algorithmic regions can be blanked without blocking the app.** With
+  Tab Vanish on, a Reels hard block covers the home feed **below the story tray**, so the stories
+  stay usable; an Explore hard block covers the **suggestion grid on the Search screen below the
+  search box**, so you can still tap the box and search (the search-active screen, keyboard up, has
+  no cover). Same overlay machinery as Tab Vanish, one window per covered region. The home-feed
+  full-screen block stands down when the region cover is enforcing, because the block would cover
+  the stories too.
+- **The active bottom-nav tab is detectable after all.** The tab frames never report `selected`, but
+  the ACTIVE tab's `tab_icon` child does (measured on IG 447, `home.xml`); `HostNodeFinder.activeTab`
+  walks up from it. That is what gates the Search cover, and it corrects the "tab selection is dead"
+  reading that issue #18 was based on — the signal was one level down.
+- Tab Vanish's TalkBack description no longer repeats itself ("Reels blocked by Nudge blocked by
+  Nudge"); the feature name and the "blocked by" suffix are now each added exactly once.
+- **Debug builds: "Last host-app surface" under Settings → Developer Options.** Shows the view ids,
+  every tab icon's `selected` state, the detected active tab, and the last ~40 cover decisions from
+  the last Instagram trees the service read, as selectable text — so a screen with no committed
+  fixture, or a cover that appears and vanishes, can be reported from the phone without adb. Ids,
+  package and state only — never text.
+
+### Fixed
+- **A large host-app tree could stop the home cover from arming at all.** The classifier's markers
+  (`tab_bar`, `sticky_header_list`, `title_logo`) were only collected by the bounded 800-node tree
+  walk, and a real feed can exhaust it: a device log showed the walk returning zero ids while a
+  targeted `findAccessibilityNodeInfosByViewId(tab_bar)` found the node, so `classify` answered
+  UNKNOWN on the Home feed and the cover's surface gate failed. The adapter now declares
+  `classifierViewIds` and the observer resolves them with the framework's indexed lookup — cheap and
+  correct at any tree size.
+- **An in-app feature block was not re-asserted when returning to a host app.** The
+  `WINDOW_STATE_CHANGED` arrival path evaluated only whole-app rules, so re-entering Instagram
+  through Recents onto the Reels-equivalent home feed did nothing for a "Reels" feature rule until
+  something fired a content change (opening a reel did). Arrivals now run the in-app feature
+  evaluation too, for the same supported packages the content-change path already handles. Device
+  report: "hard block works the first time, but after Recents the block no longer works unless I
+  open a reel".
+- **Instagram Reels detection on the home feed (issue
+  [#18](https://github.com/astraedus/nudge/issues/18)).** `InAppDetector` no longer resolves
+  Instagram features from bottom-nav tab selection: every tab reports `selected=false` on current
+  Instagram, so that path was silently dead. The home feed (Reels-equivalent) is now detected
+  through the same measured surface markers the screen classifier uses — `title_logo` while
+  the action bar is visible, and `tab_bar` + `sticky_header_list` once the feed is scrolled and the
+  action bar is gone — by consuming the classification the service already computes from the same
+  tree read. The full-screen reel-player container check (the DM-reel bypass) is unchanged and still
+  runs first.
+
+### Removed
+- **The experimental "Open to Following instead of Home" (Following steer).** It was the one thing
+  Nudge did *inside* another app (clicking Instagram's own menus), it depended on Instagram's
+  English menu labels, and it quietly stopped working whenever Instagram changed its layout. The
+  toggle, the state machine, the per-rule database column and its exports are all gone; existing
+  rules keep every other setting and the database migrates itself on the next open.
+- **Instagram "Explore" as a screen-detected feature.** Current Instagram exposes no positive
+  marker for the Explore screen and tab selection is dead, so the old toggle could only configure
+  something that never fired as a screen. It is back as a real control with an honest label —
+  "Explore (covers search suggestions)": a hard block now covers the Search screen's suggestion
+  grid (see Content covers above) instead of detecting a screen that cannot be detected.
+
 ## [1.19.0] - 2026-09-30
 
 ### Added

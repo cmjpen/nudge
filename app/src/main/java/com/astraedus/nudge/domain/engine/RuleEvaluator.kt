@@ -40,8 +40,7 @@ class RuleEvaluator @Inject constructor() {
                 inAppFeatures = rule.inAppFeatures,
                 grayscale = rule.grayscale,
                 ruleName = buildRuleName(rule),
-                tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer
+                tabVanish = rule.tabVanish
             )
         }
     }

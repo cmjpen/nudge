@@ -61,6 +61,27 @@ Edge-triggering on *every* content change would fix it and immediately reintrodu
 - **Tests**: `ContentChangeAppSwitchTest` — verified re-entry evaluates; same package / unverified package / null active window / IME (incl. the FUTO case from #5) / framework / system / own package never do; plus a cost test asserting the active window is not read for cheaply-rejected events.
 - **Device-verified with an explicit counterfactual** (Pixel 3, 15s DELAY rule on Keep, alternating Contacts ↔ Keep through the recents overview): on the pre-fix build **5 of 6 re-entries produced no `foreground evaluation` and no block** — the bug reproduced on demand; with the fix, **6 of 6** re-entries evaluated and blocked, every one of them routed through the new fallback. The #5 regression case (complete the delay, raise the keyboard with `mInputShown=true`, keep using the app) logs `ignoring transient non-app window …inputmethod.latin` and `skip evaluation … reason=passthrough` with **zero** re-blocks.
 
+### The arrival path evaluates in-app features too (issue #18 follow-up)
+
+The `WINDOW_STATE_CHANGED`/`WINDOWS_CHANGED` branch had always run `evaluateForegroundPackage` and
+nothing else; `detectAndEvaluateFeature` was reachable only from the content-change path. That
+asymmetry is invisible for a whole-app rule and total for a feature rule: the Reels-equivalent home
+feed is an in-app feature surface, so a Recents re-entry onto it evaluated nothing and showed no
+block until a reel opened and fired content changes. Device report: *"hard block works the first
+time, but after Recents the block no longer works unless I open a reel."*
+
+The arrival branch now calls `detectAndEvaluateFeature(packageName)` after
+`evaluateForegroundPackage`, guarded by `InAppDetector.SUPPORTED_PACKAGES` — the same guard the
+content-change path applies — and it inherits the detector's per-package debounce, so the tree read
+stays bounded. Pinned by `EventDispatchOrderContractTest."an arrival evaluates in-app features as
+well as whole-app rules"`.
+
+Still open, and the reason this is not a full fix: F6 in `docs/BACKLOG.md` — a re-entry that
+delivers only content changes under a stale `isOverlayActive` flag still dies at the overlay gate
+before reaching either evaluation. Closing that one still means hoisting the issue-#7 active-window
+verification above the hottest path while an overlay is up, the deferred cost decision recorded
+there.
+
 ### The launcher falls in the same hole ([#58](https://github.com/astraedus/nudge/issues/58) mechanism 1)
 
 The section above and the "Going HOME re-arms the delay" section above **that** were written as if the two were independent: one is about an app re-entry that arrives as a content change, the other about the launcher arriving as a window change. Device QA on 2026-09-25 found the intersection, and it is a live bypass.

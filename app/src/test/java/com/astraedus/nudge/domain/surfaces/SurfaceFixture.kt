@@ -81,16 +81,44 @@ object SurfaceFixture {
      *
      * This is what makes the fixtures honest: production's classifier is handed a value of exactly
      * this shape, built by exactly this reduction, so the test and the device are comparing the same
-     * thing. `actionBarTitle` is read off the host app's title node, preferring `text` and falling
-     * back to `contentDescription` (Instagram's Following header carries the string in both).
+     * thing. Ids and selection state only — the observation carries no node text.
      */
     fun observe(name: String): SurfaceObservation {
         val nodes = load(name)
-        val title = nodes.firstOrNull { it.viewId == InstagramSurfaces.ID_ACTION_BAR_TITLE }
         return SurfaceObservation(
             presentViewIds = nodes.mapNotNull { it.viewId }.toSet(),
-            actionBarTitle = title?.text ?: title?.contentDescription
+            activeTab = activeTabOf(nodes)
         )
+    }
+
+    /** [activeTabOf] by fixture name, for tests that build their own observation. */
+    fun activeTab(name: String): String? = activeTabOf(load(name))
+
+    /**
+     * The active bottom-nav tab, computed the flat-dump way.
+     *
+     * Production's `HostNodeFinder.activeTab` walks the selected `tab_icon`'s parent chain up to the
+     * tab that owns it. A hierarchy dump records document order, not nesting, so this asks the same
+     * question by geometry instead: the selected icon's bounds lie inside exactly one tab's bounds.
+     * That equivalence is not invented here — `InstagramSurfacesFixtureTest` already asserts the
+     * selected icon on the Home dump sits inside `feed_tab`, and production's cover placement has
+     * always trusted bounds off the same dumps.
+     *
+     * Null when the dump has no selected icon (the Following feed, the reel player, a popup): the
+     * classifier then falls back to node presence, which is the pre-page-gate behaviour.
+     */
+    private fun activeTabOf(nodes: List<FixtureNode>): String? {
+        val icon = nodes.firstOrNull {
+            it.viewId == InstagramSurfaces.ID_TAB_ICON && it.selected && it.right > it.left
+        } ?: return null
+        return InstagramSurfaces.activeTabs.entries.firstOrNull { (_, locator) ->
+            nodes.any { tab ->
+                tab.right > tab.left && tab.bottom > tab.top &&
+                    locator.matches(tab.viewId, tab.text, tab.contentDescription) &&
+                    icon.left >= tab.left && icon.right <= tab.right &&
+                    icon.top >= tab.top && icon.bottom <= tab.bottom
+            }
+        }?.key
     }
 
     /** The first node in [name] matching [locator], or null. Drives production locators directly. */
@@ -99,15 +127,11 @@ object SurfaceFixture {
     /**
      * Every node in [name] matching [locator].
      *
-     * Asks [NodeLocator.matchesNode] — the SAME function `HostNodeFinder` asks of a real node — so a
-     * fixture test cannot answer a different question than the accessibility service does. This used
-     * to spell the scoped/unscoped branch out here, mirroring the one in `HostNodeFinder`; two copies
-     * of a matching rule is how a fixture ends up agreeing with its author instead of with the device
-     * (`docs/testing-strategy.md` rule (b)) — the dump reader would have selected "Following" under OR
-     * while production selected whichever row came first, green about the wrong thing.
+     * Asks [NodeLocator.matches] — the SAME function `HostNodeFinder` asks of a real node — so a
+     * fixture test cannot answer a different question than the accessibility service does.
      */
     fun findAll(name: String, locator: NodeLocator): List<FixtureNode> = load(name).filter { node ->
-        locator.matchesNode(node.viewId, node.text, node.contentDescription)
+        locator.matches(node.viewId, node.text, node.contentDescription)
     }
 
     private fun attribute(tag: String, name: String): String? =

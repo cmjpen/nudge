@@ -7,8 +7,8 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
-import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import io.mockk.every
@@ -56,7 +56,6 @@ class EvaluateBlockDailyLimitTest {
             usageRepository = usageRepository,
             blockEngine = BlockEngine(ScheduleEvaluator()),
             ruleEvaluator = RuleEvaluator(),
-            scheduleEvaluator = ScheduleEvaluator(),
             preferences = preferences,
             contentFilter = contentFilter,
             nukeEnforcement = NukeEnforcement.NEVER

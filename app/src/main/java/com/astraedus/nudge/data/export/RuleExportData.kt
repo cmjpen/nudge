@@ -117,12 +117,7 @@ data class ExportedRule(
      * own on the device that wrote it -- restoring it under this build's new default (on) is what
      * "this rule hard-blocks Instagram REELS" means now that a cover exists, not a downgrade.
      */
-    val tabVanish: Boolean = true,
-    /**
-     * See `BlockRule.followingSteer`. Defaults **false**: an experimental, opt-in capability that
-     * a pre-feature backup could never have carried, so its absence must restore as off.
-     */
-    val followingSteer: Boolean = false
+    val tabVanish: Boolean = true
 )
 
 data class ExportedGroup(

@@ -18,7 +18,14 @@ data class FeatureOverride(
 @Immutable
 data class FeatureInfo(
     val key: String,
-    val displayName: String
+    val displayName: String,
+    /**
+     * What this feature actually covers, shown under the feature's override card. Null when the
+     * name says everything. This is where a feature whose enforcement reaches past its name (an
+     * Explore hard block covers the Search page's suggestion grid) says so in the settings the
+     * user actually reads.
+     */
+    val description: String? = null
 )
 
 @Immutable
@@ -77,7 +84,7 @@ data class UnifiedAppConfigState(
     val scheduledDelaySeconds: Int = 15,
     val scheduledFeatureOverrides: Map<String, FeatureOverride> = emptyMap(),
 
-    // Platform surface capabilities (Tab Vanish / Following steer)
+    // Platform surface capabilities (Tab Vanish)
     /**
      * Cover the in-app tab (e.g. Instagram's Reels tab) while a rule covering that feature
      * resolves to a HARD_BLOCK, so the icon disappears instead of merely refusing to open.
@@ -85,12 +92,6 @@ data class UnifiedAppConfigState(
      * block mode, so it adds enforcement only where the user already asked for it.
      */
     val tabVanish: Boolean = true,
-    /**
-     * Experimental, per-rule opt-in: on arrival at the app's home feed, steer it to the
-     * Following/subscriptions feed. Default false, unlike every other capability flag here --
-     * this is the first thing Nudge does *inside* another app rather than around it.
-     */
-    val followingSteer: Boolean = false,
 
     // UI state
     val isLoading: Boolean = true,
@@ -143,32 +144,45 @@ data class UnifiedAppConfigState(
         get() = PlatformSurfacesRegistry.forPackage(packageName)?.vanishableTabs?.isNotEmpty() == true
 
     /**
-     * Whether this package exposes a Following-feed steer target (e.g. Instagram's Home ->
-     * Following). Asked of [PlatformSurfacesRegistry] for the same reason as [supportsTabVanish].
+     * Display names of the features Tab Vanish covers (e.g. `["Reels", "Explore"]`), resolved
+     * through the existing [FEATURES_BY_PACKAGE] map rather than hardcoded, so the Tab Vanish copy
+     * doesn't bake in one platform's feature names. Empty when nothing is vanishable.
      */
-    val supportsFollowingSteer: Boolean
-        get() = PlatformSurfacesRegistry.forPackage(packageName)?.followingSteer != null
-
-    /**
-     * Display name of the feature Tab Vanish would cover (e.g. "Reels"), resolved through the
-     * existing [FEATURES_BY_PACKAGE] map rather than hardcoded, so the Tab Vanish copy doesn't
-     * bake in one platform's feature name. Null when nothing is vanishable for this package.
-     */
-    val vanishableFeatureLabel: String?
+    val vanishableFeatureLabels: List<String>
         get() {
-            val featureKey = PlatformSurfacesRegistry.forPackage(packageName)
+            val keys = PlatformSurfacesRegistry.forPackage(packageName)
                 ?.vanishableTabs
                 ?.keys
-                ?.firstOrNull()
-                ?: return null
-            return FEATURES_BY_PACKAGE[packageName]?.firstOrNull { it.key == featureKey }?.displayName
+                ?: return emptyList()
+            return keys.mapNotNull { key ->
+                FEATURES_BY_PACKAGE[packageName]?.firstOrNull { it.key == key }?.displayName
+            }
         }
 
     companion object {
+        /**
+         * Features offered per package.
+         *
+         * Instagram lists Reels and Explore. Explore has no screen DETECTOR — no positive marker
+         * for the screen has been captured — but a HARD_BLOCK on it covers the Search screen's
+         * suggestion grid below the search box, gated on the Search tab being active, so the
+         * search box itself stays usable. That reach is stated to the user in the feature's
+         * [FeatureInfo.description]. See `InstagramSurfaces.contentCovers`.
+         */
         val FEATURES_BY_PACKAGE: Map<String, List<FeatureInfo>> = mapOf(
             "com.instagram.android" to listOf(
-                FeatureInfo("REELS", "Reels"),
-                FeatureInfo("EXPLORE", "Explore")
+                FeatureInfo(
+                    "REELS",
+                    "Reels",
+                    "Includes reels opened from anywhere — the home feed, Explore, Search, and " +
+                        "any fullscreen reel."
+                ),
+                FeatureInfo(
+                    "EXPLORE",
+                    "Explore",
+                    "Blocking Explore covers the Search page's suggestion grid too — the search " +
+                        "box itself stays usable."
+                )
             ),
             "com.google.android.youtube" to listOf(
                 FeatureInfo("SHORTS", "Shorts")

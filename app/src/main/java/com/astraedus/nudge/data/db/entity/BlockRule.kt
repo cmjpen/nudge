@@ -52,14 +52,5 @@ data class BlockRule(
      * the user already chose the strongest mode -- hence **default true**. Turning it off is a
      * Strict-Mode weakening axis; see [com.astraedus.nudge.domain.lock.RuleWeakening].
      */
-    val tabVanish: Boolean = true,
-    /**
-     * Experimental, per-rule opt-in: on arrival at Instagram's Home feed, steer it to the
-     * Following feed. This is the first thing Nudge does *inside* another app rather than around
-     * it, which is a materially different kind of risk than blocking -- hence **default false**,
-     * unlike every other capability flag on this entity. It is not a weakening axis: it is a
-     * steer, never a block, so it is deliberately excluded from
-     * [com.astraedus.nudge.domain.lock.RuleWeakening].
-     */
-    val followingSteer: Boolean = false
+    val tabVanish: Boolean = true
 )

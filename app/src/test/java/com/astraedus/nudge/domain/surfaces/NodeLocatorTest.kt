@@ -5,33 +5,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * [NodeLocator]'s two matching rules, and the reason there are two.
+ * [NodeLocator]'s matching rule, and the field order behind it.
  *
- * Most locators want OR: find the node by its id, or by its label if this host-app build happens to
- * expose only that. Exactly one wants AND: the dropdown's menu row, where every row shares one id and
- * only the label tells them apart, and where a bare text search would substring-match a feed caption.
- *
- * The bug this file exists to prevent is not a wrong match — it is the two rules being confused for
- * each other. Applying AND to the tab locator silently breaks Tab Vanish in every non-English locale;
- * applying OR to the menu row taps whichever row came first.
+ * Every locator wants OR: find the node by its id, or by its label if this host-app build happens
+ * to expose only that. The bug this file exists to prevent is that rule drifting to AND — the Reels
+ * tab locator carries `clips_tab` AND the description "Reels" precisely so that EITHER can find it,
+ * and any inference of "both declared means both required" would silently break Tab Vanish in every
+ * non-English locale.
  */
 class NodeLocatorTest {
 
-    private val id = "com.instagram.android:id/context_menu_item_label"
     private val otherId = "com.instagram.android:id/clips_tab"
 
-    // -----------------------------------------------------------------------------------------
-    // OR semantics: the default
-    // -----------------------------------------------------------------------------------------
-
     @Test
-    fun `an unscoped locator matches on the view id alone`() {
+    fun `a locator matches on the view id alone`() {
         val locator = NodeLocator(viewIds = listOf(otherId), contentDescriptions = listOf("Reels"))
         assertTrue(locator.matches(otherId, null, null))
     }
 
     @Test
-    fun `an unscoped locator matches on the content description alone`() {
+    fun `a locator matches on the content description alone`() {
         val locator = NodeLocator(viewIds = listOf(otherId), contentDescriptions = listOf("Reels"))
         assertTrue(
             "a build that exposes the description but not the id must still find the tab",
@@ -40,12 +33,12 @@ class NodeLocatorTest {
     }
 
     @Test
-    fun `an unscoped locator matches on the text alone`() {
-        assertTrue(NodeLocator(texts = listOf("Following")).matches(null, "Following", null))
+    fun `a locator matches on the text alone`() {
+        assertTrue(NodeLocator(texts = listOf("Reels")).matches(null, "Reels", null))
     }
 
     @Test
-    fun `an unscoped locator does not match a node sharing nothing`() {
+    fun `a locator does not match a node sharing nothing`() {
         val locator = NodeLocator(viewIds = listOf(otherId), contentDescriptions = listOf("Reels"))
         assertFalse(locator.matches("com.instagram.android:id/feed_tab", null, "Home"))
     }
@@ -54,21 +47,20 @@ class NodeLocatorTest {
     fun `an empty locator matches nothing and knows it`() {
         val empty = NodeLocator()
         assertTrue(empty.isEmpty)
-        assertFalse(empty.matches(otherId, "Following", "Reels"))
+        assertFalse(empty.matches(otherId, "Reels", "Reels"))
     }
 
     /**
      * **The regression that would have cost us the tab cover.**
      *
      * The Reels tab locator carries `clips_tab` AND the description "Reels" precisely so that EITHER
-     * can find it. If `isScopedLabel` were derived from "has ids AND has labels" instead of being
-     * declared, this locator would flip to AND on its own, and the cover would stop appearing on any
-     * build or locale that does not expose the English description. Declared, not inferred.
+     * can find it. If the matching rule were ever derived from "has ids AND has labels", this locator
+     * would flip to AND on its own, and the cover would stop appearing on any build or locale that
+     * does not expose the English description. OR stays OR, declared not inferred.
      */
     @Test
-    fun `a locator carrying both ids and labels stays OR unless it declares otherwise`() {
+    fun `a locator carrying both ids and labels still matches on either`() {
         val tab = NodeLocator(viewIds = listOf(otherId), contentDescriptions = listOf("Reels"))
-        assertFalse("scopedLabel defaults to false", tab.isScopedLabel)
         assertTrue("the id alone must still find the tab", tab.matches(otherId, null, null))
         assertTrue(
             "the description alone must still find the tab — this is the locale fallback",
@@ -80,110 +72,7 @@ class NodeLocatorTest {
     @Test
     fun `the shipped reels tab locator is an OR locator`() {
         val reels = InstagramSurfaces.vanishableTabs.getValue("REELS")
-        assertFalse(
-            "Tab Vanish depends on id-or-description; AND would break it in other locales",
-            reels.isScopedLabel
-        )
         assertTrue(reels.matches(InstagramSurfaces.ID_CLIPS_TAB, null, null))
         assertTrue(reels.matches(null, null, InstagramSurfaces.DESC_REELS_TAB))
-    }
-
-    // -----------------------------------------------------------------------------------------
-    // AND semantics: opted into, for the menu row
-    // -----------------------------------------------------------------------------------------
-
-    private fun scoped() = NodeLocator(
-        viewIds = listOf(id),
-        texts = listOf("Following"),
-        contentDescriptions = listOf("Following"),
-        scopedLabel = true
-    )
-
-    @Test
-    fun `a scoped locator matches when the id and the text agree`() {
-        assertTrue(scoped().matchesScoped(id, "Following", null))
-    }
-
-    @Test
-    fun `a scoped locator matches when the id and the content description agree`() {
-        assertTrue(scoped().matchesScoped(id, null, "Following"))
-    }
-
-    /** The coin-flip case: the right id, the wrong row. This is the Favorites row. */
-    @Test
-    fun `a scoped locator rejects the right id with the wrong label`() {
-        assertFalse(
-            "every dropdown row carries this id — the label is the only thing that names the row",
-            scoped().matchesScoped(id, "Favorites", null)
-        )
-    }
-
-    /** The caption case: the right label, on a node that is not a menu row at all. */
-    @Test
-    fun `a scoped locator rejects the right label with the wrong id`() {
-        assertFalse(
-            "a feed caption containing the word must never be taken for the menu row",
-            scoped().matchesScoped("com.instagram.android:id/row_feed_photo_profile_name", "Following", null)
-        )
-    }
-
-    @Test
-    fun `a scoped locator rejects a node with the id and no label at all`() {
-        assertFalse(scoped().matchesScoped(id, null, null))
-    }
-
-    @Test
-    fun `a scoped locator rejects a node with neither`() {
-        assertFalse(scoped().matchesScoped(null, null, null))
-    }
-
-    @Test
-    fun `a declared scoped locator reports itself as scoped`() {
-        assertTrue(scoped().isScopedLabel)
-    }
-
-    /**
-     * A locator that declares AND but supplies only one side would match nothing at all, silently.
-     * `isScopedLabel` is false in that case so the caller falls back to OR rather than to nothing.
-     */
-    @Test
-    fun `declaring scoped without both sides is not treated as scoped`() {
-        assertFalse(
-            "an id with no label cannot AND against anything",
-            NodeLocator(viewIds = listOf(id), scopedLabel = true).isScopedLabel
-        )
-        assertFalse(
-            "a label with no id cannot be scoped by anything",
-            NodeLocator(texts = listOf("Following"), scopedLabel = true).isScopedLabel
-        )
-    }
-
-    /** The shipped menu-row locator, read from production. */
-    @Test
-    fun `the shipped menu label locator is the one scoped locator in the app`() {
-        val label = InstagramSurfaces.followingSteer!!.menuItemLabel
-        assertTrue("the dropdown row needs id AND label", label.isScopedLabel)
-
-        val others = listOf(
-            InstagramSurfaces.followingSteer!!.entryPoint,
-            InstagramSurfaces.followingSteer!!.menuItem,
-            InstagramSurfaces.titleLocator!!
-        ) + InstagramSurfaces.vanishableTabs.values
-        others.forEach { locator ->
-            assertFalse("only menuItemLabel may be scoped, not $locator", locator.isScopedLabel)
-        }
-    }
-
-    /**
-     * `matches` is untouched by the scoped flag: it is still OR, and it is still what every other
-     * locator uses. Pinned because the tempting "simplification" is to make `matches` respect the
-     * flag, which would make the two rules one and reintroduce both bugs at once.
-     */
-    @Test
-    fun `matches stays OR even on a scoped locator`() {
-        assertTrue(
-            "matches() is the OR rule; callers branch on isScopedLabel instead of matches changing",
-            scoped().matches(id, "Favorites", null)
-        )
     }
 }

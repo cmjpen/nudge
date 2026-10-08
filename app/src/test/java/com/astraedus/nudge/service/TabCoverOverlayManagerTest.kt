@@ -43,11 +43,17 @@ class TabCoverOverlayManagerTest {
     private val reelsLabel = InstagramSurfaces.DESC_REELS_TAB
     private val navColor = InstagramSurfaces.navBarColor(nightMode = false)
 
+    /** The feature key the single-tab assertions drive. Real keys are `InAppDetector.Feature.key`. */
+    private val key = "REELS"
+
     /** `clips_tab` [216,1896][432,2028], measured. */
     private val clipsTab = requireNotNull(TabCoverPlacement.of(216, 1896, 432, 2028))
 
     /** `tab_bar` [0,1896][1080,2028] — a different, also-real rectangle, for the move case. */
     private val wholeBar = requireNotNull(TabCoverPlacement.of(0, 1896, 1080, 2028))
+
+    /** `search_tab` [648,1896][864,2028], measured. Not adjacent to `clips_tab`. */
+    private val searchTab = requireNotNull(TabCoverPlacement.of(648, 1896, 864, 2028))
 
     @Before
     fun setUp() {
@@ -58,7 +64,7 @@ class TabCoverOverlayManagerTest {
     }
 
     private fun show(placement: TabCoverPlacement = clipsTab, label: String = reelsLabel) {
-        manager.apply(instagram, TabCoverEffect.Show(placement), navColor, label)
+        manager.apply(key, instagram, TabCoverEffect.Show(placement), navColor, label)
     }
 
     // ------------------------------------------------------------------------------------------
@@ -68,7 +74,7 @@ class TabCoverOverlayManagerTest {
     @Test
     fun `hiding when nothing is shown touches no window`() {
         manager.hide()
-        manager.apply(instagram, TabCoverEffect.Hide, navColor, reelsLabel)
+        manager.apply(key, instagram, TabCoverEffect.Hide, navColor, reelsLabel)
 
         verify(exactly = 0) { windowManager.removeView(any()) }
         assertFalse(manager.isVisible())
@@ -81,9 +87,9 @@ class TabCoverOverlayManagerTest {
      */
     @Test
     fun `the None effect does no window work in either state`() {
-        manager.apply(instagram, TabCoverEffect.None, navColor, reelsLabel)
+        manager.apply(key, instagram, TabCoverEffect.None, navColor, reelsLabel)
         show()
-        manager.apply(instagram, TabCoverEffect.None, navColor, reelsLabel)
+        manager.apply(key, instagram, TabCoverEffect.None, navColor, reelsLabel)
 
         assertTrue(manager.isVisible())
         verify(exactly = 1) { windowManager.addView(any(), any()) }
@@ -264,7 +270,7 @@ class TabCoverOverlayManagerTest {
     @Test
     fun `the explicit Hide effect tears the cover down`() {
         show()
-        manager.apply(instagram, TabCoverEffect.Hide, navColor, reelsLabel)
+        manager.apply(key, instagram, TabCoverEffect.Hide, navColor, reelsLabel)
 
         verify(exactly = 1) { windowManager.removeView(coverView) }
         assertFalse(manager.isVisible())
@@ -337,7 +343,7 @@ class TabCoverOverlayManagerTest {
             assertEquals(
                 "shownPlacement() != null must equal isVisible() ($where)",
                 manager.isVisible(),
-                manager.shownPlacement() != null
+                manager.shownPlacement(key) != null
             )
         }
 
@@ -346,7 +352,7 @@ class TabCoverOverlayManagerTest {
         assertAgree("after a show")
         show(wholeBar)
         assertAgree("after a move")
-        manager.apply(instagram, TabCoverEffect.None, navColor, reelsLabel)
+        manager.apply(key, instagram, TabCoverEffect.None, navColor, reelsLabel)
         assertAgree("after a None")
         manager.onForegroundSignal(ForegroundSignal.NotForeground(instagram))
         assertAgree("after a signal that keeps it")
@@ -359,16 +365,16 @@ class TabCoverOverlayManagerTest {
     /** The placement handed to the decider must be the one actually on screen, move included. */
     @Test
     fun `shownPlacement reports the placement the window currently has`() {
-        assertNull(manager.shownPlacement())
+        assertNull(manager.shownPlacement(key))
 
         show(clipsTab)
-        assertEquals(clipsTab, manager.shownPlacement())
+        assertEquals(clipsTab, manager.shownPlacement(key))
 
         show(wholeBar)
-        assertEquals("a move must update what the decider is told", wholeBar, manager.shownPlacement())
+        assertEquals("a move must update what the decider is told", wholeBar, manager.shownPlacement(key))
 
         manager.hide()
-        assertNull(manager.shownPlacement())
+        assertNull(manager.shownPlacement(key))
     }
 
     /**
@@ -382,6 +388,81 @@ class TabCoverOverlayManagerTest {
         show(clipsTab)
 
         assertFalse(manager.isVisible())
-        assertNull(manager.shownPlacement())
+        assertNull(manager.shownPlacement(key))
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Several features, one window each. Instagram has two: Reels and Search/Explore, and they are
+    // not adjacent, so a single shared window would swallow the tabs between them.
+    // ------------------------------------------------------------------------------------------
+
+    /** A factory that hands out a distinct mock per call, so two windows can be told apart. */
+    private fun freshViews(): MutableList<AwarenessOverlayWindow.Container> {
+        val views = mutableListOf<AwarenessOverlayWindow.Container>()
+        manager.coverViewFactory = {
+            mockk<AwarenessOverlayWindow.Container>(relaxed = true).also { views += it }
+        }
+        return views
+    }
+
+    @Test
+    fun `two features get two independent covers and move independently`() {
+        val views = freshViews()
+        manager.apply(key, instagram, TabCoverEffect.Show(clipsTab), navColor, reelsLabel)
+        manager.apply(
+            "EXPLORE", instagram,
+            TabCoverEffect.Show(searchTab), navColor, InstagramSurfaces.DESC_SEARCH_TAB
+        )
+
+        assertEquals("one window per feature", 2, views.size)
+        verify(exactly = 2) { windowManager.addView(any(), any()) }
+        assertEquals(clipsTab, manager.shownPlacement(key))
+        assertEquals(searchTab, manager.shownPlacement("EXPLORE"))
+        assertTrue(manager.isVisible())
+
+        // Moving the Reels cover must not touch the Explore window.
+        manager.apply(key, instagram, TabCoverEffect.Show(wholeBar), navColor, reelsLabel)
+        assertEquals(wholeBar, manager.shownPlacement(key))
+        assertEquals(searchTab, manager.shownPlacement("EXPLORE"))
+        verify(exactly = 1) { windowManager.updateViewLayout(any(), any()) }
+        verify(exactly = 0) { windowManager.removeView(any()) }
+
+        // Hiding one leaves the other up.
+        manager.apply(key, instagram, TabCoverEffect.Hide, navColor, reelsLabel)
+        assertNull(manager.shownPlacement(key))
+        assertEquals(searchTab, manager.shownPlacement("EXPLORE"))
+        assertTrue("one hidden cover must not hide the other", manager.isVisible())
+    }
+
+    @Test
+    fun `a teardown signal hides every cover drawn over the app that left`() {
+        freshViews()
+        manager.apply(key, instagram, TabCoverEffect.Show(clipsTab), navColor, reelsLabel)
+        manager.apply(
+            "EXPLORE", instagram,
+            TabCoverEffect.Show(searchTab), navColor, InstagramSurfaces.DESC_SEARCH_TAB
+        )
+
+        manager.onForegroundSignal(ForegroundSignal.AppWindow("com.google.android.keep"))
+
+        verify(exactly = 2) { windowManager.removeView(any()) }
+        assertFalse(manager.isVisible())
+        assertNull(manager.shownPlacement(key))
+        assertNull(manager.shownPlacement("EXPLORE"))
+    }
+
+    @Test
+    fun `hiding all covers hides every window`() {
+        freshViews()
+        manager.apply(key, instagram, TabCoverEffect.Show(clipsTab), navColor, reelsLabel)
+        manager.apply(
+            "EXPLORE", instagram,
+            TabCoverEffect.Show(searchTab), navColor, InstagramSurfaces.DESC_SEARCH_TAB
+        )
+
+        manager.hide()
+
+        verify(exactly = 2) { windowManager.removeView(any()) }
+        assertFalse(manager.isVisible())
     }
 }

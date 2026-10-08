@@ -179,12 +179,11 @@ class PassthroughManager @Inject constructor() {
     /**
      * A departure revokes the grant, whichever shape it arrives in.
      *
-     * A `Started` that replaced nothing is the first sitting of the process; there is no grant to
-     * revoke. One that replaced a sitting must revoke it, same as an outright `Ended`. That
-     * unwrapping is [endedSitting]'s, not this method's — the service asks the same question to end
-     * the arrival and the Following steer's visit, and three copies of it is how two of them come to
-     * disagree.
-     */
+* A `Started` that replaced nothing is the first sitting of the process; there is no grant to
+      * revoke. One that replaced a sitting must revoke it, same as an outright `Ended`. That
+      * unwrapping is [endedSitting]'s, not this method's — the service asks the same question to end
+      * the arrival, and two copies of it is how two consumers come to disagree.
+      */
     private fun revokeIfSittingEnded(event: SittingEvent) {
         if (event.endedSitting != null) clear()
     }

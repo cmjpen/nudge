@@ -2,12 +2,18 @@ package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.BuildConfig
+import com.astraedus.nudge.domain.surfaces.HostSurface
 import com.astraedus.nudge.util.NudgeLogger
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Detects in-app features (Reels, Shorts, Explore) by inspecting the accessibility tree.
+ * Detects in-app features (Reels, Shorts, TikTok feed) by inspecting the accessibility tree.
+ *
+ * Instagram's detection rests on two measured signals: the full-screen reel player's own
+ * containers, and the home feed named by `domain/surfaces/`'s surface classifier (the feed is
+ * Reels-equivalent). It deliberately does NOT read bottom-nav tab selection: every tab reports
+ * `selected=false` on current Instagram, which made that path structurally dead (issue #18).
  *
  * Detection is best-effort -- apps change their UI frequently. When detection fails
  * we return null (no feature detected) rather than crashing, so the service falls back
@@ -32,6 +38,16 @@ class InAppDetector @Inject constructor(
     enum class Feature(val displayName: String, val key: String) {
         REELS("Instagram Reels", "REELS"),
         SHORTS("YouTube Shorts", "SHORTS"),
+
+        /**
+         * The Explore feature.
+         *
+         * No DETECTOR can produce it on current Instagram — tab selection is dead and no positive
+         * marker for the screen has been captured — but the feature is enforced where it can be: an
+         * EXPLORE rule that resolves to a HARD_BLOCK vanishes the Search/Explore tab (see
+         * `InstagramSurfaces.vanishableTabs`). The rule editors offer it with copy that says "tab",
+         * not "screen".
+         */
         EXPLORE("Instagram Explore", "EXPLORE"),
         TIKTOK_FEED("TikTok Feed", "TIKTOK_FEED")
     }
@@ -86,17 +102,24 @@ class InAppDetector @Inject constructor(
     /**
      * Attempt to detect which in-app feature is active for the given package.
      *
+     * @param hostSurface the classification of the same tree read, from `domain/surfaces/`. It is
+     *   the home-feed signal for Instagram: the measured markers behind `InstagramSurfaces` are the
+     *   only reliable way to name that screen, because bottom-nav tab selection is dead (issue #18).
      * @return The detected [Feature], or null if no specific feature is detected
      *   (user is in a non-feature part of the app, or detection failed).
      */
-    override fun detectFeature(packageName: String, rootNode: AccessibilityNodeInfo?): Feature? {
+    override fun detectFeature(
+        packageName: String,
+        rootNode: AccessibilityNodeInfo?,
+        hostSurface: HostSurface?
+    ): Feature? {
         if (rootNode == null) {
             logger.d("feature detection skipped package=$packageName reason=null_root")
             return null
         }
         return try {
             val feature = when (packageName) {
-                "com.instagram.android" -> detectInstagram(rootNode)
+                "com.instagram.android" -> detectInstagram(rootNode, hostSurface)
                 "com.google.android.youtube" -> detectYouTube(rootNode)
                 "com.zhiliaoapp.musically", "com.ss.android.ugc.trill" -> Feature.TIKTOK_FEED
                 else -> null
@@ -154,8 +177,8 @@ class InAppDetector @Inject constructor(
         logger.d("undetected surface package=$packageName nodes=$visited viewIds=$signature")
     }
 
-    private fun detectInstagram(root: AccessibilityNodeInfo): Feature? {
-        // The reel PLAYER first, before any tab reasoning. A reel opened from a DM (or a share
+    private fun detectInstagram(root: AccessibilityNodeInfo, hostSurface: HostSurface?): Feature? {
+        // The reel PLAYER first, before any surface reasoning. A reel opened from a DM (or a share
         // link, or a profile) runs in com.instagram.modal.ModalActivity, which has NO bottom nav
         // at all — so tab-based detection cannot see it even in principle, and the user scrolled
         // reels indefinitely with a HARD_BLOCK rule active. Keying on the player's own container
@@ -165,88 +188,23 @@ class InAppDetector @Inject constructor(
             return Feature.REELS
         }
 
-        // Use resource IDs for reliable tab detection. Instagram's bottom nav tabs:
-        //   feed_tab (Home), clips_tab (Reels), search_tab (Search/Explore), profile_tab (Profile)
-        // The tab FrameLayout itself has selected=false, but its child tab_icon ImageView
-        // has selected=true for the active tab.
-        val activeTab = findActiveInstagramTab(root)
-        logger.d("instagram active tab: $activeTab")
-        return when (activeTab) {
-            "clips_tab" -> Feature.REELS
-            "search_tab" -> Feature.EXPLORE
-            "feed_tab" -> Feature.REELS  // Home feed = reels-equivalent
-            else -> {
-                // Fallback: text-based detection for older Instagram versions
-                detectInstagramByText(root)
-            }
+        // The home feed is Reels-equivalent (advertised behaviour), so a REELS rule covers it. It is
+        // named by the measured markers behind `InstagramSurfaces.classify` — `title_logo` while the
+        // action bar is visible, and `tab_bar` + `sticky_header_list` once the feed is scrolled and
+        // the action bar has gone. Bottom-nav tab selection is NOT usable and must not come back:
+        // every tab reports selected=false on current Instagram (pinned by
+        // `InstagramSurfacesFixtureTest`), which is exactly what made the old selection-based path
+        // silently dead (issue #18).
+        if (hostSurface == HostSurface.HOME_FEED) {
+            logger.d("instagram home feed detected")
+            return Feature.REELS
         }
-    }
 
-    /**
-     * Find which Instagram bottom nav tab is active by checking resource IDs.
-     * Returns the tab ID suffix (e.g. "feed_tab", "clips_tab") or null if not found.
-     */
-    private fun findActiveInstagramTab(root: AccessibilityNodeInfo): String? {
-        val tabIds = listOf("feed_tab", "clips_tab", "search_tab", "profile_tab")
-        for (tabId in tabIds) {
-            val nodes = root.findAccessibilityNodeInfosByViewId(
-                "com.instagram.android:id/$tabId"
-            )
-            if (nodes.isNotEmpty()) {
-                for (node in nodes) {
-                    if (isTabActive(node)) {
-                        recycleNodes(nodes)
-                        return tabId
-                    }
-                }
-                recycleNodes(nodes)
-            }
-        }
-        return null
-    }
-
-    /**
-     * Check if a tab node is active by looking for selected=true on the node
-     * itself or any of its descendants (up to 3 levels deep).
-     */
-    private fun isTabActive(node: AccessibilityNodeInfo): Boolean {
-        if (node.isSelected) return true
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            if (child.isSelected) return true
-            // Check grandchildren too
-            for (j in 0 until child.childCount) {
-                val grandchild = child.getChild(j) ?: continue
-                if (grandchild.isSelected) return true
-            }
-        }
-        return false
-    }
-
-    /** Fallback text-based detection for older Instagram versions. */
-    private fun detectInstagramByText(root: AccessibilityNodeInfo): Feature? {
-        val reelsNodes = root.findAccessibilityNodeInfosByText("Reels")
-        if (reelsNodes.isNotEmpty()) {
-            for (node in reelsNodes) {
-                if (node.isSelected || isInSelectedTab(node)) {
-                    recycleNodes(reelsNodes)
-                    return Feature.REELS
-                }
-            }
-        }
-        recycleNodes(reelsNodes)
-
-        val exploreNodes = root.findAccessibilityNodeInfosByText("Explore")
-        if (exploreNodes.isNotEmpty()) {
-            for (node in exploreNodes) {
-                if (node.isSelected || isInSelectedTab(node)) {
-                    recycleNodes(exploreNodes)
-                    return Feature.EXPLORE
-                }
-            }
-        }
-        recycleNodes(exploreNodes)
-
+        // Explore is deliberately NOT detected. Current Instagram exposes no positive marker for it:
+        // tab selection is dead and no Explore container has been captured, so the old
+        // search_tab/text fallback could never fire. It has been deleted rather than left as a
+        // plausible-looking heuristic, and the feature is no longer offered in the rule editor until
+        // a device capture earns it a marker (see docs/BACKLOG.md).
         return null
     }
 
@@ -302,8 +260,10 @@ class InAppDetector @Inject constructor(
 
     /**
      * Check if any immediate child of the node is selected.
-     * Instagram sets selected=true on the child tab_icon ImageView, not the
-     * parent FrameLayout that carries the content-description.
+     *
+     * YouTube has been observed to mark the active tab's child icon rather than the parent
+     * FrameLayout that carries the content-description. Instagram was once described the same way,
+     * but the measured dumps disprove it on current versions and Instagram no longer uses this path.
      */
     private fun hasSelectedChild(node: AccessibilityNodeInfo): Boolean {
         for (i in 0 until node.childCount) {

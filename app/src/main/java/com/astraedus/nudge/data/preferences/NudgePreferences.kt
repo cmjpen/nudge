@@ -198,12 +198,12 @@ class NudgePreferences @Inject constructor(
     }
 
     /**
-     * Master toggle for the "2-minute daily pass" emergency escape hatch. Defaults to true (the
-     * escape hatch is available out of the box); users can disable it entirely. Independent of Strict
-     * Mode, which hides the pass button while it is on.
+     * Master toggle for the "2-minute daily pass" emergency escape hatch. Defaults to FALSE — the
+     * hatch is opt-in (product call, 2026-10-05: "make daily 2 minute pass off by default").
+     * Independent of Strict Mode, which hides the pass button while it is on.
      */
     val emergencyPassEnabled: Flow<Boolean> = context.dataStore.data
-        .map { prefs -> prefs[Keys.EMERGENCY_PASS_ENABLED] ?: true }
+        .map { prefs -> prefs[Keys.EMERGENCY_PASS_ENABLED] ?: false }
 
     suspend fun setEmergencyPassEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs ->

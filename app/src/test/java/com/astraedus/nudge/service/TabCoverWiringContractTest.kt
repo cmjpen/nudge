@@ -24,6 +24,7 @@ import org.junit.Test
 class TabCoverWiringContractTest {
 
     private val servicePath = "main/java/com/astraedus/nudge/service/NudgeAccessibilityService.kt"
+    private val observerPath = "main/java/com/astraedus/nudge/service/SurfaceObserver.kt"
 
     private fun read(relative: String): String {
         val candidates = listOf(File("src/$relative"), File("app/src/$relative"))
@@ -39,21 +40,25 @@ class TabCoverWiringContractTest {
         .joinToString("\n") { line -> line.substringBefore("//") }
 
     private val code: String by lazy { stripComments(read(servicePath)) }
+    private val observerCode: String by lazy { stripComments(read(observerPath)) }
 
-    private fun bodyOf(functionSignature: String): String {
-        val start = code.indexOf(functionSignature)
-        assertTrue("$functionSignature not found in $servicePath", start >= 0)
+    private fun bodyOf(functionSignature: String): String =
+        bodyOfIn(code, functionSignature, servicePath)
+
+    private fun bodyOfIn(source: String, functionSignature: String, path: String): String {
+        val start = source.indexOf(functionSignature)
+        assertTrue("$functionSignature not found in $path", start >= 0)
         // Brace-match from the signature's opening brace to its close.
         var depth = 0
-        var i = code.indexOf('{', start)
+        var i = source.indexOf('{', start)
         assertTrue("no body for $functionSignature", i >= 0)
         val from = i
-        while (i < code.length) {
-            when (code[i]) {
+        while (i < source.length) {
+            when (source[i]) {
                 '{' -> depth++
                 '}' -> {
                     depth--
-                    if (depth == 0) return code.substring(from, i + 1)
+                    if (depth == 0) return source.substring(from, i + 1)
                 }
             }
             i++
@@ -146,6 +151,89 @@ class TabCoverWiringContractTest {
             "NudgeAccessibilityService must not contain a host app's view ids; they live in the " +
                 "PlatformSurfaces adapter",
             !code.contains("com.instagram.android:id/")
+        )
+    }
+
+    /**
+     * EVERY vanishable feature is asked about, not just the first tab found in the tree.
+     *
+     * The single-cover version used `firstNotNullOfOrNull`, which silently made a second entry dead:
+     * whichever tab came first in the adapter map always won the slot, so an Explore hard block would
+     * never produce a cover. The loop now walks the ADAPTER's keys, which is also what lets a cover
+     * that should go away be hidden (`placement == null`) instead of skipped. Placement, not
+     * spelling — a faithful refactor of the loop body re-pins cleanly.
+     */
+    @Test
+    fun `every vanishable feature is evaluated, not just the first found in the tree`() {
+        val body = bodyOf("private suspend fun maintainTabCover(")
+        assertTrue(
+            "maintainTabCover must walk surfaces.vanishableTabs.keys. Got:\n$body",
+            Regex("""for \(feature in surfaces\.vanishableTabs\.keys\)""").containsMatchIn(body)
+        )
+        assertTrue(
+            "each feature's own rule decision must be asked (detectedFeature = feature)",
+            body.contains("detectedFeature = feature")
+        )
+    }
+
+    /**
+     * Region covers ride the SAME tree read and the SAME window manager as tab covers.
+     *
+     * The nodes are resolved in `maintainHostSurfaces` (where the read is) and applied through
+     * `tabCoverOverlayManager`; a second read or a second window stack is how the two cover kinds
+     * would drift apart. The ACTIVE TAB — the page gate in the classifier and the Explore cover's
+     * own gate — is part of that one read too, carried on the observation, so neither gate can be
+     * fed a second, differently-timed lookup. Pinned at source level because no value-level test can
+     * see where a call sits, the same argument as the rest of this file.
+     */
+    @Test
+    fun `content covers ride the existing tree read and the one manager`() {
+        val maintain = bodyOf("private fun maintainHostSurfaces(")
+        assertTrue(
+            "the region placements must be resolved on the same tree read. Got:\n$maintain",
+            maintain.contains("HostNodeFinder.contentCoverPlacement(")
+        )
+        assertTrue(
+            "maintainContentCovers must be driven from the same launch as the tab covers",
+            maintain.contains("maintainContentCovers(")
+        )
+        assertTrue(
+            "the page gate must read the classifier's own observation, not a second lookup. " +
+                "Got:\n$maintain",
+            maintain.contains("observation.activeTab")
+        )
+
+        val observe = bodyOfIn(observerCode, "fun observe(", observerPath)
+        assertTrue(
+            "the observation must carry the active tab resolved on the same tree read: it is the " +
+                "classifier's page gate and the Explore cover's gate, and with it null both " +
+                "silently stop firing. Got:\n$observe",
+            observe.contains("HostNodeFinder.activeTab(")
+        )
+
+        val apply = bodyOf("private suspend fun maintainContentCovers(")
+        assertTrue(
+            "the region cover must go through the one window manager. Got:\n$apply",
+            apply.contains("tabCoverOverlayManager()")
+        )
+    }
+
+    /**
+     * A covered home feed must not ALSO get the full-screen block: the block covers the stories,
+     * which is exactly what the region cover exists to leave usable. And the stand-down must gate on
+     * a RESOLVABLE placement — standing down on the feature alone would leave the feed unenforced
+     * whenever the cover could not be placed.
+     */
+    @Test
+    fun `the full block stands down when a content cover enforces the surface`() {
+        val body = bodyOf("private fun detectAndEvaluateFeature(")
+        assertTrue(
+            "detectAndEvaluateFeature must have the content-cover stand-down guard. Got:\n$body",
+            body.contains("coveredByContentCover")
+        )
+        assertTrue(
+            "the stand-down must gate on the resolvable placement, not on the feature alone",
+            body.contains("host.contentCovers[feature.key] != null")
         )
     }
 }

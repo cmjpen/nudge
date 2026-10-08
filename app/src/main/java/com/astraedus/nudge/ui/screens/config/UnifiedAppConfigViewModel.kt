@@ -174,7 +174,6 @@ class UnifiedAppConfigViewModel @Inject constructor(
                 // Platform surface capabilities -- read off the default app rule; falling back
                 // to the same defaults as a fresh BlockRule when there is no existing rule.
                 tabVanish = defaultAppRule?.tabVanish ?: true,
-                followingSteer = defaultAppRule?.followingSteer ?: false,
                 // UI state
                 isLoading = false,
                 isSaved = false,
@@ -231,13 +230,9 @@ class UnifiedAppConfigViewModel @Inject constructor(
             ),
             webDomains = webDomains,
             webBlockMode = webBlockMode,
-            // followingSteer is only ever meaningful on the app-level default rule: the steer is
-            // consulted while the app is ALLOWED, not as part of a block decision, and the
-            // app-level rule is the one that always exists. tabVanish is also set here, but
-            // performSave additionally copies it onto every other rule this view model
-            // persists -- see the comment there.
-            tabVanish = state.tabVanish,
-            followingSteer = state.followingSteer
+            // tabVanish is set here, and performSave additionally copies it onto every other
+            // rule this view model persists -- see the comment there.
+            tabVanish = state.tabVanish
         )
     }
 
@@ -305,8 +300,7 @@ class UnifiedAppConfigViewModel @Inject constructor(
             // Scheduled app-level rule. tabVanish carries here too -- same reasoning as the
             // feature override rules above: this rule can be the one that decides a HARD_BLOCK
             // during the scheduled window, so it needs the same flag as every other rule for
-            // this package. followingSteer does NOT go here: it belongs on the app-level
-            // DEFAULT rule only (see buildDefaultRule), never on a scheduled rule.
+            // this package.
             blockRuleRepository.addRule(
                 BlockRule(
                     packageName = packageName,
@@ -556,9 +550,5 @@ class UnifiedAppConfigViewModel @Inject constructor(
 
     fun setTabVanish(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(tabVanish = enabled)
-    }
-
-    fun setFollowingSteer(enabled: Boolean) {
-        _uiState.value = _uiState.value.copy(followingSteer = enabled)
     }
 }

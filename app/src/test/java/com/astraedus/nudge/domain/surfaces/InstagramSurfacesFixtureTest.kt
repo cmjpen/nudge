@@ -38,9 +38,9 @@ class InstagramSurfacesFixtureTest {
      * `sticky_header_list` rung into [InstagramSurfaces.classify].
      *
      * Instagram's action bar scrolls away with the content, so `title_logo` is simply **absent** from
-     * this dump. Classified on `title_logo` alone it would read as OTHER_TAB, which resets
-     * `FollowingSteer`'s memory — and the user would get the title dropdown opened under them again
-     * every single time they scrolled back to the top of the feed.
+     * this dump. Classified on `title_logo` alone it would read as OTHER_TAB, and the home-feed
+     * content cover's surface gate would drop the cover the moment the user scrolled — hiding it on
+     * the very scroll that makes it matter.
      */
     @Test
     fun `the scrolled home feed classifies as HOME_FEED even with the action bar gone`() {
@@ -75,6 +75,96 @@ class InstagramSurfacesFixtureTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // The page gate: presence is not on-screen
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * The 2026-10-07 device regression. Instagram's main activity keeps the other tabs' pages
+     * attached, so the Messages tab's tree also carries the Home feed's nodes — the device readout
+     * below proves `media_group` and the feed's action buttons are in it. The old presence-only
+     * ladder called that screen HOME_FEED, which hard-blocked Reels on Messages and left the
+     * home-feed content cover floating over it.
+     *
+     * The selected `tab_icon` is this app's only measured signal for WHICH attached page is visible,
+     * so it must be checked before any marker. This test drives the real classifier with the real
+     * Home dump's id set — the exact shape the service builds — and only the active tab changed.
+     */
+    @Test
+    fun `the home markers on an active non-home tab are not the home feed`() {
+        val onHome = SurfaceFixture.observe("home")
+        assertEquals(
+            "the premise: on the Home tab this very id set is the home feed",
+            HostSurface.HOME_FEED,
+            InstagramSurfaces.classify(onHome)
+        )
+
+        listOf("DIRECT", "SEARCH", "PROFILE").forEach { tab ->
+            assertEquals(
+                "$tab is the visible page; the attached Home page's nodes must not override the " +
+                    "active tab",
+                HostSurface.OTHER_TAB,
+                InstagramSurfaces.classify(onHome.copy(activeTab = tab))
+            )
+        }
+    }
+
+    /**
+     * The counterfactual for the gate above: with no active-tab signal the markers still win, which
+     * is the pre-page-gate behaviour and the right failure mode for a host app that stops exposing
+     * tab selection. Delete the gate and the test above goes green for the wrong reason.
+     */
+    @Test
+    fun `without an active tab signal the home markers still win`() {
+        val onHome = SurfaceFixture.observe("home")
+        assertEquals(
+            HostSurface.HOME_FEED,
+            InstagramSurfaces.classify(onHome.copy(activeTab = null))
+        )
+    }
+
+    /**
+     * The recorded Messages-tab readout itself, not a synthetic tree: `SurfaceInspector` on the
+     * bench, 2026-10-07 21:29, with `activeTab=DIRECT` and yes — the feed's own nodes
+     * (`media_group`, `row_feed_button_comment/like/save`, `inline_follow_button`) in the same
+     * tree. It must never classify as the Home feed. The `tab_icon` / `sticky_header_list` entries
+     * are below the readout's visible fold; omitted here, and irrelevant to this answer.
+     */
+    @Test
+    fun `the recorded messages tab readout is not the home feed`() {
+        val dmIds = setOf(
+            "com.instagram.android:id/action_bar_title_view",
+            "com.instagram.android:id/avatar_container",
+            "com.instagram.android:id/cf_hub_recycler_view",
+            "com.instagram.android:id/clips_tab",
+            "com.instagram.android:id/direct_quick_snap_consumption_preview",
+            "com.instagram.android:id/direct_tab",
+            "com.instagram.android:id/feed_tab",
+            "com.instagram.android:id/igds_action_bar_title",
+            "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview",
+            "com.instagram.android:id/indicator_background_view",
+            "com.instagram.android:id/indicator_icon_view",
+            "com.instagram.android:id/inline_follow_button",
+            "com.instagram.android:id/location_text",
+            "com.instagram.android:id/map_pog_container",
+            "com.instagram.android:id/media_group",
+            "com.instagram.android:id/media_option_button",
+            "com.instagram.android:id/notification",
+            "com.instagram.android:id/pog_bubble_text",
+            "com.instagram.android:id/pog_music_note_artist_name",
+            "com.instagram.android:id/pog_music_note_song_title_text",
+            "com.instagram.android:id/pog_music_note_text",
+            "com.instagram.android:id/pog_root_view",
+            "com.instagram.android:id/profile_tab",
+            "com.instagram.android:id/reposts_ufi_icon",
+            "com.instagram.android:id/row_feed_button_comment",
+            "com.instagram.android:id/row_feed_button_like",
+            "com.instagram.android:id/row_feed_button_save"
+        )
+        val dm = SurfaceObservation(presentViewIds = dmIds, activeTab = "DIRECT")
+        assertEquals(HostSurface.OTHER_TAB, InstagramSurfaces.classify(dm))
+    }
+
+    // -----------------------------------------------------------------------------------------
     // The Reels tab and its cover placement
     // -----------------------------------------------------------------------------------------
 
@@ -105,25 +195,118 @@ class InstagramSurfacesFixtureTest {
     }
 
     /**
-     * The measured fact that forbids keying anything on tab selection: **every** tab reports
-     * `selected=false`, including the active one. Pinned here so a future contributor who reaches for
-     * `isSelected` finds a failing test instead of a plausible-looking heuristic.
+     * The home-feed CONTENT cover, through production's own arithmetic: from the bottom of the
+     * story tray `[0,231][1080,611]` to the top of the nav bar `[0,1896][1080,2028]`, spanning the
+     * nav bar's width. The stories and the top bar stay usable; the algorithmic feed below them is
+     * what gets covered.
      */
     @Test
-    fun `no bottom-nav tab reports itself as selected`() {
+    fun `the home feed content cover starts below the story tray and ends at the nav bar`() {
+        val spec = InstagramSurfaces.contentCovers.getValue("REELS")
+        assertEquals(HostSurface.HOME_FEED, spec.surface)
+
+        val tray = SurfaceFixture.find("home", spec.top)
+        val bar = SurfaceFixture.find("home", spec.bottom)
+        assertNotNull("reels_tray_container must be present on the home feed", tray)
+        assertNotNull("tab_bar must be present on the home feed", bar)
+
+        val placement = ContentCoverPlacement.of(tray!!.placement(), bar!!.placement())
+        assertEquals(TabCoverPlacement(x = 0, y = 611, width = 1080, height = 1285), placement)
+    }
+
+    /**
+     * The scrolled fallback: `home-scrolled` has NO story tray — it scrolls away — so the cover
+     * starts at the bottom of the top action bar `[0,77][1080,231]` instead. Everything below the
+     * chrome is covered: never a guessed rectangle, and never a gap that leaves the feed exposed.
+     */
+    @Test
+    fun `the home cover falls back to the action bar when the story tray is gone`() {
+        val spec = InstagramSurfaces.contentCovers.getValue("REELS")
+        assertNull(
+            "the premise of this test is that the scrolled fixture has no story tray",
+            SurfaceFixture.find("home-scrolled", spec.top)
+        )
+
+        val fallback = SurfaceFixture.find("home-scrolled", spec.topFallback!!)
+        val bar = SurfaceFixture.find("home-scrolled", spec.bottom)
+        assertNotNull(fallback)
+        assertNotNull(bar)
+
+        val placement = ContentCoverPlacement.of(fallback!!.placement(), bar!!.placement())
+        assertEquals(TabCoverPlacement(x = 0, y = 231, width = 1080, height = 1665), placement)
+    }
+
+    /**
+     * The Search-screen cover is gated on the Search tab being active, and its top is the Search
+     * screen's OWN field. Device-captured 2026-10-08 (SurfaceInspector readout, Search tab,
+     * `activeTab=SEARCH`): the Search tree carries `action_bar_search_edit_text` and a VISIBLE
+     * `tab_bar`, and carries NO `action_bar_LinearLayout` — the Home action bar this spec originally
+     * keyed on — so the placement never resolved and the cover never armed while reels sat in the
+     * grid. This is the regression test for that.
+     *
+     * Still no committed Search-screen fixture, so the rectangle itself remains unpinned
+     * (`docs/BACKLOG.md`); what is pinned is the gate and the one id the capture earned, so the
+     * geometry gets asserted the day a Search dump is scrubbed in.
+     */
+    @Test
+    fun `the search cover is gated on the search tab and keyed on the search field`() {
+        val spec = InstagramSurfaces.contentCovers.getValue("EXPLORE")
+        assertEquals("SEARCH", spec.activeTab)
+        assertEquals(
+            "the top must be the Search screen's own field: the Home action bar it used to key on " +
+                "is absent from the Search tree (device-captured 2026-10-08)",
+            listOf(InstagramSurfaces.ID_ACTION_BAR_SEARCH_EDIT_TEXT),
+            spec.top.viewIds
+        )
+        assertTrue(
+            "the nav bar must stay the bottom node: the user's Search capture read it visible=true",
+            spec.bottom == NodeLocator(viewIds = listOf(InstagramSurfaces.ID_TAB_BAR))
+        )
+    }
+
+    /**
+     * CORRECTION of a claim this file used to make. The tab FRAMES never report selection, but the
+     * ACTIVE tab's `tab_icon` child does: `home.xml` was recorded on the Home tab, and exactly one
+     * of the `tab_icon` nodes is selected — inside `feed_tab`. That is the signal the Search cover's
+     * active-tab gate uses; the old "selection is dead" reading was one level too high.
+     */
+    @Test
+    fun `only the active tab's icon reports selected and it belongs to the home tab`() {
+        val icons = SurfaceFixture.load("home").filter { it.viewId == InstagramSurfaces.ID_TAB_ICON }
+        assertTrue("the dump must contain tab icons at all", icons.isNotEmpty())
+
+        val selected = icons.filter { it.selected }
+        assertEquals("exactly one tab icon is selected", 1, selected.size)
+
+        val feed = SurfaceFixture.load("home").first { it.viewId == InstagramSurfaces.ID_FEED_TAB }
+        val icon = selected.single()
+        assertTrue(
+            "the selected icon must sit inside feed_tab, the tab the dump was recorded on",
+            icon.left >= feed.left && icon.right <= feed.right &&
+                icon.top >= feed.top && icon.bottom <= feed.bottom
+        )
+    }
+
+    /**
+     * The tab FRAMES still report `selected=false`, every one of them, active included — the signal
+     * is on the icon child, not the frame. Pinned so nobody "simplifies" the active-tab lookup back
+     * to the frame and silently kills it.
+     */
+    @Test
+    fun `no bottom-nav tab frame reports itself as selected`() {
         val tabIds = setOf(
             InstagramSurfaces.ID_CLIPS_TAB,
-            "com.instagram.android:id/feed_tab",
-            "com.instagram.android:id/search_tab",
-            "com.instagram.android:id/direct_tab",
-            "com.instagram.android:id/profile_tab"
+            InstagramSurfaces.ID_FEED_TAB,
+            InstagramSurfaces.ID_SEARCH_TAB,
+            InstagramSurfaces.ID_DIRECT_TAB,
+            InstagramSurfaces.ID_PROFILE_TAB
         )
         val tabs = SurfaceFixture.load("home").filter { it.viewId in tabIds }
         assertEquals("all five tabs should be present on the home feed", 5, tabs.size)
         tabs.forEach { tab ->
             assertFalse(
-                "${tab.viewId} reports selected=true — the dump says every tab is false, and the " +
-                    "cover keys on bounds for exactly that reason",
+                "${tab.viewId} reports selected=true — the frame never does, which is why the " +
+                    "active-tab lookup reads the tab_icon child instead",
                 tab.selected
             )
         }
@@ -131,24 +314,30 @@ class InstagramSurfacesFixtureTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // Following feed
+    // The Following screen: positively NOT the home feed
     // -----------------------------------------------------------------------------------------
 
+    /**
+     * The Following screen has no `title_logo`, no `tab_bar` and no active-tab signal (it is a
+     * separate full-screen activity), so it classifies as UNKNOWN — which is the honest answer and
+     * the safe one: no content cover's surface gate passes there, so nothing arms over it.
+     */
     @Test
-    fun `the following feed classifies as FOLLOWING_FEED`() {
-        assertEquals(HostSurface.FOLLOWING_FEED, classify("following-feed"))
+    fun `the following feed does not classify as the home feed`() {
+        assertEquals(HostSurface.UNKNOWN, classify("following-feed"))
     }
 
     /** A warm relaunch of Instagram resumes on Following, so it classifies the same way. */
     @Test
     fun `a warm relaunch resumes on the following feed`() {
-        assertEquals(HostSurface.FOLLOWING_FEED, classify("relaunch"))
+        assertEquals(HostSurface.UNKNOWN, classify("relaunch"))
     }
 
     /**
-     * **There is no `clips_tab` node at all on the Following screen** — no `tab_bar` either. This is
-     * why the cover must be torn down rather than left floating: there is no nav bar under it to
-     * cover, so a cover that survived here would be an opaque rectangle over the feed's content.
+     * **There is no `clips_tab` node at all on the Following screen** — no `tab_bar` either. There is
+     * no nav bar under a cover to sit on, so a cover that survived here would be an opaque rectangle
+     * over the feed's content; the decider hides it, and the classifier's UNKNOWN above is the first
+     * line of that defense.
      *
      * Asserted explicitly, on both Following fixtures, because the absence is the load-bearing fact.
      */
@@ -171,137 +360,37 @@ class InstagramSurfacesFixtureTest {
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The title dropdown
-    // -----------------------------------------------------------------------------------------
-
     /**
-     * The "Following" row is findable through [SteerRecipe.menuItemLabel].
-     *
-     * The rows all share the single id `context_menu_item`, so the row id cannot pick a row; only the
-     * label can. This is the one place the feature depends on host-app TEXT, which is why the steer
-     * fails silently rather than retrying.
+     * The recorded popup-window shape: `logo-menu.xml` is the title dropdown OPEN, and the dump
+     * contains the popup alone — no `tab_bar`, no `title_logo`, no title. A host app's popup window
+     * can be the only window an accessibility read sees, and this fixture is the recorded proof.
+     * UNKNOWN is the honest classification for it.
      */
     @Test
-    fun `the following menu item is findable in the open dropdown`() {
-        val recipe = InstagramSurfaces.followingSteer
-        assertNotNull("Instagram must declare a steer recipe", recipe)
-
-        val label = SurfaceFixture.find("logo-menu", recipe!!.menuItemLabel)
-        assertNotNull("the Following label must be findable in the open dropdown", label)
-        assertEquals(
-            InstagramSurfaces.LABEL_FOLLOWING,
-            label!!.text ?: label.contentDescription
-        )
-
-        val rows = SurfaceFixture.findAll("logo-menu", recipe.menuItem)
-        assertEquals("the dropdown records two rows, Following and Favorites", 2, rows.size)
-        assertTrue("a menu row must be clickable", rows.all { it.clickable })
-    }
-
-    /**
-     * **The menu-row locator selects "Following" and NOT "Favorites".**
-     *
-     * The rows all carry the same `context_menu_item_label` id, so under OR semantics this locator
-     * matches every row and the finder taps whichever came first in the tree — which for this fixture
-     * could be Favorites. `menuItemLabel` therefore declares `scopedLabel = true`, and the fixture
-     * reader branches on `isScopedLabel` exactly as `HostNodeFinder` does.
-     *
-     * The test asserts the Favorites row IS present in the same dump first. Without that, the whole
-     * thing would pass on a one-row fixture while proving nothing at all.
-     */
-    @Test
-    fun `the menu label locator selects the following row and never favorites`() {
-        val labelLocator = InstagramSurfaces.followingSteer!!.menuItemLabel
-        assertTrue("this locator must use id-AND-label semantics", labelLocator.isScopedLabel)
-
-        // The premise: both rows exist in this dump, so choosing between them is a real choice.
-        val allLabels = SurfaceFixture.load("logo-menu")
-            .filter { it.viewId == InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL }
-            .mapNotNull { it.text ?: it.contentDescription }
-        assertEquals(
-            "the fixture must contain BOTH rows, or this test proves nothing",
-            listOf("Favorites", "Following"),
-            allLabels.sorted()
-        )
-
-        // The assertion: exactly one node is selected, and it is the Following row.
-        val selected = SurfaceFixture.findAll("logo-menu", labelLocator)
-        assertEquals("exactly one row may be selected", 1, selected.size)
-        assertEquals(
-            InstagramSurfaces.LABEL_FOLLOWING,
-            selected.single().text ?: selected.single().contentDescription
-        )
-        assertEquals(InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL, selected.single().viewId)
-    }
-
-    /**
-     * The counterfactual for the rule above: under OR semantics the SAME locator over the SAME dump
-     * matches more than one node, so the finder's choice would be arbitrary.
-     *
-     * This is what makes the scoped flag provably load-bearing rather than decorative — delete
-     * `scopedLabel = true` and the test above starts depending on tree order.
-     */
-    @Test
-    fun `under OR semantics the same locator would match more than one row`() {
-        val labelLocator = InstagramSurfaces.followingSteer!!.menuItemLabel
-        val orMatches = SurfaceFixture.load("logo-menu").filter {
-            labelLocator.matches(it.viewId, it.text, it.contentDescription)
-        }
-        assertTrue(
-            "if OR matched only one node the scoped flag would be pointless; it matches " +
-                "${orMatches.size}, which is why AND is required",
-            orMatches.size > 1
-        )
-        assertTrue(
-            "and one of those OR matches is the Favorites row — the row we must never tap",
-            orMatches.any { (it.text ?: it.contentDescription) == "Favorites" }
-        )
-    }
-
-    /**
-     * The entry point is the clickable ancestor, not the logo.
-     *
-     * `title_logo` reports `clickable=false` in the dump, so a tap dispatched at it does nothing at
-     * all; `action_bar_title_view` is the ViewAnimator that actually opens the dropdown. Both halves
-     * are asserted because the wrong one is the obvious choice — the logo is what a human looks at.
-     */
-    @Test
-    fun `the steer entry point is clickable and the home logo is not`() {
-        val recipe = InstagramSurfaces.followingSteer!!
-        val entry = SurfaceFixture.find("home", recipe.entryPoint)
-        assertNotNull("action_bar_title_view must be present on the home feed", entry)
-        assertTrue("the steer entry point must be clickable", entry!!.clickable)
-
-        val logo = SurfaceFixture.load("home").first { it.viewId == InstagramSurfaces.ID_TITLE_LOGO }
-        assertFalse(
-            "title_logo reports clickable=false — clicking it is the mistake this recipe avoids",
-            logo.clickable
-        )
+    fun `the open dropdown dump is a popup window alone and reads as unknown`() {
+        val ids = SurfaceFixture.observe("logo-menu").presentViewIds
+        assertFalse("no tab_bar in the popup", InstagramSurfaces.ID_TAB_BAR in ids)
+        assertFalse("no title_logo in the popup", InstagramSurfaces.ID_TITLE_LOGO in ids)
+        assertEquals(HostSurface.UNKNOWN, classify("logo-menu"))
     }
 
     // -----------------------------------------------------------------------------------------
-    // Deep links: the recorded proof they do not work
+    // The recorded deep-link dumps: they land on the home feed
     // -----------------------------------------------------------------------------------------
 
     /**
-     * **This is the evidence that makes the click-based steer the right choice, not a preference.**
-     *
-     * `variant-link` is the tree after opening `https://www.instagram.com/?variant=following` — a URL
-     * the app claims and then ignores. `scheme-link` is the tree after
-     * `instagram://feed?variant=following`, which does not resolve at all. Both land on the ordinary
-     * Home feed, and `coldstart` records that a cold start does the same.
-     *
-     * If any of these ever classified as FOLLOWING_FEED, a deep link would be the cheaper, safer
-     * implementation and this feature should be rewritten to use it. Until then there is no
-     * deep-link path in [InstagramSurfaces] by design, and these three assertions are why.
+     * `variant-link` is the tree after opening `https://www.instagram.com/?variant=following` — a
+     * URL the app claims and then ignores. `scheme-link` is the tree after
+     * `instagram://feed?variant=following`, which does not resolve at all. `coldstart` is a cold
+     * start. All three are ordinary Home-feed trees, recorded during the 2026-09-22 spike, and they
+     * pin rung 2 of [InstagramSurfaces.classify] across tree variants no other fixture covers.
      */
     @Test
-    fun `neither deep link reaches the following feed and a cold start lands on home`() {
+    fun `the deep-link and cold-start dumps are home feeds`() {
         listOf("variant-link", "scheme-link", "coldstart").forEach { fixture ->
             assertEquals(
-                "$fixture landed somewhere other than the home feed — if this is FOLLOWING_FEED, " +
-                    "the deep link works and the click sequence should be replaced by it",
+                "$fixture was recorded as the ordinary Home feed; if this stopped being HOME_FEED " +
+                    "the rung has a tree-shape gap",
                 HostSurface.HOME_FEED,
                 classify(fixture)
             )
@@ -324,12 +413,11 @@ class InstagramSurfacesFixtureTest {
             "coldstart" to HostSurface.HOME_FEED,
             "variant-link" to HostSurface.HOME_FEED,
             "scheme-link" to HostSurface.HOME_FEED,
-            "following-feed" to HostSurface.FOLLOWING_FEED,
-            "relaunch" to HostSurface.FOLLOWING_FEED,
-            // The dropdown dump is the popup window alone: no tab_bar, no title_logo, no title. We
-            // know nothing about the screen underneath from it, and UNKNOWN is the honest answer —
-            // which is also why menu visibility is a separate input to FollowingSteer rather than a
-            // HostSurface value.
+            // The Following screen and the open dropdown are both screens with no tab_bar, no
+            // title_logo and no active-tab signal: separate activity, and popup window alone.
+            // UNKNOWN is the honest answer for both, and it is the safe one — no cover arms there.
+            "following-feed" to HostSurface.UNKNOWN,
+            "relaunch" to HostSurface.UNKNOWN,
             "logo-menu" to HostSurface.UNKNOWN
         )
         assertEquals(
@@ -362,62 +450,5 @@ class InstagramSurfacesFixtureTest {
                 foreign
             )
         }
-    }
-
-    // -----------------------------------------------------------------------------------------
-    // The title locator
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * The title locator finds the Following header, and finds nothing on Home.
-     *
-     * This is the seam that makes rung 1 of [InstagramSurfaces.classify] reachable at all: the service
-     * has to be told WHICH node the title string comes from, and without it every observation carries
-     * a null title, the Following feed is never positively recognised, and the steer's once-per-arrival
-     * memory is never marked from the destination screen — so a user who backed out of Following to
-     * Home would be steered again. Both halves are asserted because the absence on Home is what stops
-     * the locator matching the dropdown row of the same name.
-     */
-    @Test
-    fun `the title locator finds the following header and nothing on the home feed`() {
-        val locator = InstagramSurfaces.titleLocator
-        assertNotNull("Instagram must publish a title locator", locator)
-
-        listOf("following-feed", "relaunch").forEach { fixture ->
-            val title = SurfaceFixture.find(fixture, locator!!)
-            assertNotNull("$fixture must expose a title node", title)
-            assertEquals(
-                InstagramSurfaces.LABEL_FOLLOWING,
-                title!!.text ?: title.contentDescription
-            )
-        }
-        listOf("home", "home-scrolled", "coldstart", "logo-menu").forEach { fixture ->
-            assertNull(
-                "$fixture must expose no title node — a match here would misread the screen",
-                SurfaceFixture.find(fixture, locator!!)
-            )
-        }
-    }
-
-    /**
-     * The whole pipeline, end to end, on the one fixture that needs it: locate the title, read its
-     * text, build the observation, classify. This is what the service does, with the same objects.
-     */
-    @Test
-    fun `reading the title through the locator classifies the following feed`() {
-        val locator = InstagramSurfaces.titleLocator!!
-        val node = SurfaceFixture.find("following-feed", locator)!!
-        val observation = SurfaceObservation(
-            presentViewIds = SurfaceFixture.load("following-feed").mapNotNull { it.viewId }.toSet(),
-            actionBarTitle = node.text ?: node.contentDescription
-        )
-        assertEquals(HostSurface.FOLLOWING_FEED, InstagramSurfaces.classify(observation))
-
-        // The counterfactual: drop the title and the same tree is UNKNOWN, not FOLLOWING_FEED. This
-        // is exactly the behaviour before the title locator existed.
-        assertEquals(
-            HostSurface.UNKNOWN,
-            InstagramSurfaces.classify(observation.copy(actionBarTitle = null))
-        )
     }
 }

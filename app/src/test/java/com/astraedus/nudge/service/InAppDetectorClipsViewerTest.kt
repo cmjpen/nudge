@@ -52,11 +52,11 @@ class InAppDetectorClipsViewerTest {
             )
         )
 
-        assertEquals(InAppDetector.Feature.REELS, detector.detectFeature(ig, root))
+        assertEquals(InAppDetector.Feature.REELS, detector.detectFeature(ig, root, hostSurface = null))
     }
 
     /**
-     * The player's tree varies by entry point — the DM variant carries a reply bar, others do not.
+     * The player's tree varies by entry point â€” the DM variant carries a reply bar, others do not.
      * Any single container is sufficient, so a partial match must still detect.
      */
     @Test
@@ -69,14 +69,14 @@ class InAppDetectorClipsViewerTest {
             assertEquals(
                 "expected REELS from $id alone",
                 InAppDetector.Feature.REELS,
-                detector.detectFeature(ig, rootWith(setOf(id)))
+                detector.detectFeature(ig, rootWith(setOf(id)), hostSurface = null)
             )
         }
     }
 
     /**
      * The player check must not fire on ordinary browsing. A DM thread shows reel previews but
-     * carries none of the player containers — blocking here would make Instagram unusable for
+     * carries none of the player containers â€” blocking here would make Instagram unusable for
      * messaging, which is not what a REELS rule asks for.
      */
     @Test
@@ -89,19 +89,19 @@ class InAppDetectorClipsViewerTest {
             )
         )
 
-        assertNull(detector.detectFeature(ig, root))
+        assertNull(detector.detectFeature(ig, root, hostSurface = null))
     }
 
     /** The player check must not hijack a surface with no clips containers and no active tab. */
     @Test
     fun `an unknown surface still returns null`() {
-        assertNull(detector.detectFeature(ig, rootWith(emptySet())))
+        assertNull(detector.detectFeature(ig, rootWith(emptySet()), hostSurface = null))
     }
 
-    /** A null root must never throw — detection is best-effort by contract. */
+    /** A null root must never throw â€” detection is best-effort by contract. */
     @Test
     fun `null root returns null`() {
-        assertNull(detector.detectFeature(ig, null))
+        assertNull(detector.detectFeature(ig, null, hostSurface = null))
     }
 
     /** The player containers are Instagram-specific and must not leak into YouTube detection. */
@@ -109,6 +109,6 @@ class InAppDetectorClipsViewerTest {
     fun `clips containers do not trigger for YouTube`() {
         val root = rootWith(setOf("com.instagram.android:id/clips_viewer_view_pager"))
 
-        assertNull(detector.detectFeature("com.google.android.youtube", root))
+        assertNull(detector.detectFeature("com.google.android.youtube", root, hostSurface = null))
     }
 }

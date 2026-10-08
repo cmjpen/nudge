@@ -19,9 +19,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The tab-vanish cover: one solid, TOUCHABLE `TYPE_ACCESSIBILITY_OVERLAY` window painted exactly
- * over a host app's nav-bar tab, in the nav bar's own colour, so the icon disappears and the tap is
- * eaten.
+ * The tab-vanish covers: solid, TOUCHABLE `TYPE_ACCESSIBILITY_OVERLAY` windows painted exactly
+ * over a host app's nav-bar tabs, in the nav bar's own colour, so the icons disappear and the taps
+ * are eaten. Keyed by feature (`InAppDetector.Feature.key`), because a host app may have more than
+ * one tab to cover (Instagram's Reels and Search/Explore) and they are not adjacent, so one window
+ * cannot cover both without swallowing the tabs between them.
  *
  * Structurally a sibling of [CounterOverlayManager] and [TimeRemainingOverlayManager] — same
  * `serviceContext` / [setServiceContext] / [clearServiceContext] dance, same never-throw window
@@ -68,18 +70,25 @@ class TabCoverOverlayManager @Inject constructor(
     private val logger: NudgeLogger
 ) : TabCoverOverlayManagerApi {
 
-    private var overlayView: AwarenessOverlayWindow.Container? = null
+    /**
+     * One attached cover window, and the facts the decider needs about it.
+     *
+     * The whole map is replaced (copy-on-write) on the main thread and read as one immutable value
+     * by whichever thread asks, so a reader can never see half an update. The old single-window
+     * class used separate volatile fields; with N covers those are N chances for `shownPlacement`
+     * to disagree with the window that actually exists.
+     */
+    private data class Cover(
+        val view: AwarenessOverlayWindow.Container,
+        val placement: TabCoverPlacement,
+        val packageName: String
+    )
+
+    /** Feature key -> attached cover. Replaced, never mutated, on the main thread. */
+    @Volatile
+    private var covers: Map<String, Cover> = emptyMap()
+
     private var windowManager: WindowManager? = null
-    // Volatile because shownPlacement() is read from whatever thread asks, while the writes happen
-    // on the main thread inside the window work.
-    @Volatile
-    private var currentPlacement: TabCoverPlacement? = null
-
-    @Volatile
-    private var isShowing = false
-
-    @Volatile
-    private var coveredPackage: String? = null
 
     // TYPE_ACCESSIBILITY_OVERLAY needs the service context for both the window token AND view
     // creation. Using ApplicationContext for views causes BadTokenException.
@@ -131,6 +140,9 @@ class TabCoverOverlayManager @Inject constructor(
 
     fun setServiceContext(ctx: Context) {
         serviceContext = ctx
+        // A fresh service context means fresh window tokens; anything resolved against the old one
+        // is not usable. Any cover window from the old service is already gone with that service.
+        windowManager = null
         logger.d("tab cover service context set")
     }
 
@@ -139,107 +151,113 @@ class TabCoverOverlayManager @Inject constructor(
         serviceContext = null
     }
 
-    override fun isVisible(): Boolean = isShowing
+    override fun isVisible(): Boolean = covers.isNotEmpty()
 
-    override fun coveredPackage(): String? = coveredPackage
+    override fun coveredPackage(): String? = covers.values.firstOrNull()?.packageName
 
     // Read straight off the window state rather than cached anywhere else, so "where is the cover"
     // has exactly one answer and the decider cannot be told one thing while the window does another.
-    override fun shownPlacement(): TabCoverPlacement? = if (isShowing) currentPlacement else null
+    override fun shownPlacement(featureKey: String): TabCoverPlacement? =
+        covers[featureKey]?.placement
 
-    override fun apply(packageName: String, effect: TabCoverEffect, color: Int, label: String) {
+    override fun apply(
+        featureKey: String,
+        packageName: String,
+        effect: TabCoverEffect,
+        color: Int,
+        label: String
+    ) {
         when (effect) {
             // Idempotent by construction: "no opinion" must cost nothing, because this arrives on
             // every content-change event while the user scrolls.
             is TabCoverEffect.None -> return
-            is TabCoverEffect.Hide -> onMainThread { hideOnMainThread() }
+            is TabCoverEffect.Hide -> onMainThread { hideOnMainThread(featureKey) }
             is TabCoverEffect.Show -> onMainThread {
-                showOrMoveOnMainThread(packageName, effect.placement, color, label)
+                showOrMoveOnMainThread(featureKey, packageName, effect.placement, color, label)
             }
         }
     }
 
     override fun hide() {
-        onMainThread { hideOnMainThread() }
+        onMainThread { covers.keys.toList().forEach { hideOnMainThread(it) } }
     }
 
     override fun onForegroundSignal(signal: ForegroundSignal) {
-        // Every bit of the decision is TabCoverPresence's. Nothing about which signals mean "the
-        // user left" may be re-stated here: the cover is itself an AwarenessOverlay, so a local
-        // guess would order it away on its own window event (the issue #41 shape).
-        if (TabCoverPresence.shouldKeep(signal, coveredPackage)) return
-        if (!isShowing) return
-        logger.d("tab cover teardown signal=${signal::class.simpleName} covered=$coveredPackage")
-        onMainThread { hideOnMainThread() }
+        // Every bit of the decision is TabCoverPresence's, applied per cover. Nothing about which
+        // signals mean "the user left" may be re-stated here: the cover is itself an
+        // AwarenessOverlay, so a local guess would order it away on its own window event (the
+        // issue #41 shape).
+        val stale = covers.filterValues {
+            !TabCoverPresence.shouldKeep(signal, it.packageName)
+        }.keys
+        if (stale.isEmpty()) return
+        logger.d(
+            "tab cover teardown signal=${signal::class.simpleName} features=${stale.joinToString(",")}"
+        )
+        onMainThread { stale.forEach { hideOnMainThread(it) } }
     }
 
     private fun showOrMoveOnMainThread(
+        featureKey: String,
         packageName: String,
         placement: TabCoverPlacement,
         color: Int,
         label: String
     ) {
-        val existing = overlayView
-        if (isShowing && existing != null) {
-            val samePlacement = currentPlacement == placement
-            val samePackage = coveredPackage == packageName
+        val existing = covers[featureKey]
+        if (existing != null) {
+            val samePlacement = existing.placement == placement
+            val samePackage = existing.packageName == packageName
             if (samePlacement && samePackage) return
 
             // MOVE the window, never remove-and-re-add. A remove+add on every content change
             // flickers, and each add re-fires the window events that issue #41 is about.
             try {
-                paint(existing, color, label)
-                windowManager?.updateViewLayout(existing, layoutParamsFor(placement))
-                currentPlacement = placement
-                coveredPackage = packageName
-                logger.d("tab cover moved package=$packageName placement=$placement")
+                paint(existing.view, color, label)
+                windowManager?.updateViewLayout(existing.view, layoutParamsFor(placement))
+                covers = covers + (featureKey to existing.copy(
+                    placement = placement,
+                    packageName = packageName
+                ))
+                logger.d("tab cover moved feature=$featureKey package=$packageName placement=$placement")
             } catch (e: Exception) {
-                logger.w("tab cover move failed package=$packageName", e)
+                logger.w("tab cover move failed feature=$featureKey package=$packageName", e)
                 // A stale window that cannot be moved is worse than none: it is an opaque rectangle
                 // at the old coordinates. Drop it and let the next decision re-add it cleanly.
-                hideOnMainThread()
+                hideOnMainThread(featureKey)
             }
             return
         }
 
         val ctx = serviceContext ?: run {
-            logger.w("tab cover show skipped reason=no_service_context")
+            logger.w("tab cover show skipped feature=$featureKey reason=no_service_context")
             return
         }
 
         try {
-            windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val wm = windowManager
+                ?: (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+                    .also { windowManager = it }
             val view = createCoverView(ctx, color, label)
-            overlayView = view
-            windowManager?.addView(view, layoutParamsFor(placement))
-            currentPlacement = placement
-            coveredPackage = packageName
-            isShowing = true
-            logger.i("tab cover shown package=$packageName placement=$placement label=$label")
+            wm.addView(view, layoutParamsFor(placement))
+            covers = covers + (featureKey to Cover(view, placement, packageName))
+            logger.i(
+                "tab cover shown feature=$featureKey package=$packageName placement=$placement label=$label"
+            )
         } catch (e: Exception) {
-            logger.w("tab cover show failed package=$packageName", e)
-            resetViewState()
+            logger.w("tab cover show failed feature=$featureKey package=$packageName", e)
         }
     }
 
-    private fun hideOnMainThread() {
-        if (!isShowing) return
+    private fun hideOnMainThread(featureKey: String) {
+        val cover = covers[featureKey] ?: return
         try {
-            windowManager?.removeView(overlayView)
+            windowManager?.removeView(cover.view)
         } catch (e: Exception) {
-            logger.w("tab cover hide failed", e)
+            logger.w("tab cover hide failed feature=$featureKey", e)
         }
-        val was = coveredPackage
-        resetViewState()
-        logger.i("tab cover hidden package=$was")
-    }
-
-    private fun resetViewState() {
-        overlayView = null
-        windowManager = null
-        currentPlacement = null
-        coveredPackage = null
-        isShowing = false
+        covers = covers - featureKey
+        logger.i("tab cover hidden feature=$featureKey package=${cover.packageName}")
     }
 
     /**
@@ -300,7 +318,7 @@ class TabCoverOverlayManager @Inject constructor(
             // in logcat, and "did the cover actually eat that tap" is unanswerable from the outside
             // otherwise. NudgeLogger.d is gated on debug builds / the debug-logging preference, so
             // a user hammering the nav bar cannot spam a release log.
-            logger.d("tab cover consumed touch package=$coveredPackage")
+            logger.d("tab cover consumed touch package=${coveredPackage()}")
             true
         }
         return view

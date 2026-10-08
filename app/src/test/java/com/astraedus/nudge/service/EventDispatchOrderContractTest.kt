@@ -322,6 +322,69 @@ class EventDispatchOrderContractTest {
     }
 
     /**
+     * The home-feed classification has to reach the detector, or Instagram detection is dead again.
+     *
+     * Issue #18's fix: bottom-nav tab selection cannot name Instagram's home feed (`selected=false`
+     * on every tab), so the detector takes the `HostSurface` classification the service computes
+     * from the same tree read. The parameter is required, which stops a call site from omitting it
+     * -- but nothing at compile time stops that call site from passing a null, and null is the same
+     * value it uses for "no adapter describes this package". The regression would be silent, so the
+     * caller-only fact is pinned here, the same way the null early-return above is.
+     */
+    @Test
+    fun `the feature detector receives the host-surface classification`() {
+        val start = source.indexOf("private fun detectAndEvaluateFeature(")
+        assertTrue("detectAndEvaluateFeature must exist", start >= 0)
+        // Deliberately no "\n" in the needle: the working tree may be CRLF, and a LF-anchored
+        // search would silently read the whole rest of the file as the body.
+        val end = source.indexOf("    private fun ", start + 1)
+        val body = stripComments(source.substring(start, if (end > start) end else source.length))
+
+        val maintain = body.indexOf("maintainHostSurfaces(packageName, rootNode)")
+        val detect = body.indexOf("detectFeature(packageName, rootNode,")
+        assertTrue("maintainHostSurfaces must produce the classification on this tree read", maintain >= 0)
+        assertTrue("the detector must be called after that read", detect > maintain)
+        assertTrue(
+            "the classification must reach detectFeature; a null third argument drops Instagram's " +
+                "home-feed signal and silently restores issue #18",
+            body.substring(detect).contains("host?.surface")
+        )
+    }
+
+    /**
+     * An ARRIVAL has to ask the feature question, not only the whole-app one.
+     *
+     * `WINDOW_STATE_CHANGED` (the path a Recents re-entry takes) used to run only
+     * `evaluateForegroundPackage`, which matches whole-app rules and cannot see an in-app feature
+     * rule. So returning to Instagram's Reels-equivalent home feed after Recents evaluated nothing,
+     * and the block only came back once a reel opened and fired content changes -- whose path runs
+     * BOTH halves. The two evaluation entry points have to agree; this pins the arrival half.
+     *
+     * Source-level because it is a caller-only fact: no value-level test can see that a branch
+     * forgot to ask a question, and the pure gate tests all pass whatever the caller does.
+     */
+    @Test
+    fun `an arrival evaluates in-app features as well as whole-app rules`() {
+        val start = source.indexOf("A11yEventType.WINDOW_STATE_CHANGED,")
+        assertTrue("the window-state branch must exist", start >= 0)
+        val end = source.indexOf("A11yEventType.WINDOW_CONTENT_CHANGED ->", start)
+        assertTrue("the window-state branch must be followed by the content-change branch", end > start)
+        val body = stripComments(source.substring(start, end))
+
+        val wholeApp = body.indexOf("evaluateForegroundPackage(packageName)")
+        val feature = body.indexOf("detectAndEvaluateFeature(packageName)")
+        assertTrue("an arrival must evaluate the whole-app rules", wholeApp >= 0)
+        assertTrue(
+            "an arrival into a host app must evaluate its in-app features too, or a Recents " +
+                "re-entry onto a feature surface (Instagram's home feed) stays unenforced until " +
+                "something fires a content change",
+            feature >= 0
+        )
+        assertTrue("the supported-package guard must stay, or every app arrival pays a tree read",
+            body.contains("packageName in InAppDetector.SUPPORTED_PACKAGES"))
+    }
+
+    /**
      * The trace has to see the events that get DROPPED — a picture-in-picture bubble, our own
      * window, a keyboard, a system surface — because those are what a report in this family turns
      * out to be about. A trace that only saw the events we already act on would record our

@@ -506,7 +506,8 @@ fun RuleEditorScreen(
                             "Choose where this rule applies.\n\n" +
                             "If no features are selected, this rule applies to the whole app when you open it.\n\n" +
                             "If you select Reels, Explore, Shorts, or TikTok Feed, this rule only applies when Nudge detects that feature.\n\n" +
-                            "The action still comes from Block Mode above. For example, select Explore + Delay to add a 15 second delay only when opening Explore."
+                            "The action still comes from Block Mode above. For example, select Reels + Delay to add a 15 second delay only when Reels opens.\n\n" +
+                            "Explore has no on-screen detection yet: hard-blocking it covers the suggestion grid on the Search screen, leaving the search box usable."
                         )
                     }
 
@@ -518,7 +519,9 @@ fun RuleEditorScreen(
 
                     val pkg = state.packageName
 
-                    // Instagram features
+                    // Instagram features. Explore has no detector, but a HARD_BLOCK on it covers the
+                    // Search screen's suggestion grid, so the control is real enforcement with an
+                    // honest label. See `InstagramSurfaces.contentCovers`.
                     if (pkg == "com.instagram.android") {
                         InAppCheckbox(
                             label = "Reels",
@@ -526,7 +529,7 @@ fun RuleEditorScreen(
                             onCheckedChange = { viewModel.setInAppReels(it) }
                         )
                         InAppCheckbox(
-                            label = "Explore",
+                            label = "Explore (covers search suggestions)",
                             checked = state.inAppExplore,
                             onCheckedChange = { viewModel.setInAppExplore(it) }
                         )

@@ -20,20 +20,26 @@ package com.astraedus.nudge.domain.surfaces
  *   why its presence is a usable "a bottom-nav screen is showing" signal, and why the cover has to
  *   be torn down rather than left to float when it goes away.
  * - `clips_tab` sits at `[216,1896][432,2028]` with content-description "Reels".
- * - **Every tab reports `selected=false` in the dump, the active one included.** Nothing in this
- *   file, or anywhere downstream, may key on tab selection. The cover keys on `clips_tab` BOUNDS
- *   and nothing else.
+ * - **Every tab FRAME reports `selected=false` in the dump, the active one included — but the ACTIVE
+ *   tab's `tab_icon` child reports `selected=true`.** The signal is one level below the frame, and
+ *   [activeTabs]/[activeTabIndicatorId] are what read it. The tab COVER still keys on `clips_tab`
+ *   BOUNDS; selection is used to recognise the Search screen and, since the 2026-10-07 capture below,
+ *   as the page gate that keeps one tab's attached nodes from impersonating another tab.
+ * - **Presence is not on-screen: the main activity keeps the other tabs' pages attached.** Device-
+ *   captured 2026-10-07 (`SurfaceInspector` readout, Messages tab): the tree carried `media_group`,
+ *   `row_feed_button_like/comment/save` and `inline_follow_button` — the home feed's own nodes — and
+ *   a classifier reading presence alone called it HOME_FEED, hard-blocking Reels on Messages and
+ *   leaving the home-feed cover floating there. Two defenses, and both are needed: the selected
+ *   `tab_icon` is the measured signal for WHICH attached page is showing and [classify] checks it
+ *   before any marker, while `HostNodeFinder` drops ids whose nodes are not visible to the user —
+ *   which is what covers the Profile page, where Instagram exposes no tab selection at all
+ *   (`tabStates` all false, device-captured 2026-10-07) and a Reels hard block fired there too.
  * - `title_logo` (ImageView, content-description "Instagram Home Feed") marks the Home feed, but it
- *   is NOT clickable. The clickable parent is `action_bar_title_view`, a ViewAnimator at
- *   `[132,97][948,210]` — so the steer's entry point is the parent, not the logo.
- * - The dropdown's rows are all `context_menu_item` (Button) with a `context_menu_item_label`
- *   (TextView) child reading "Following" or "Favorites". The row id cannot pick a row; the label can.
+ *   is NOT clickable — its clickable parent is `action_bar_title_view`, a ViewAnimator at
+ *   `[132,97][948,210]`.
  * - Following is a SEPARATE full-screen activity: `action_bar_title` reads "Following", and
- *   `tab_bar`/`clips_tab`/`feed_tab` are gone from the tree entirely.
- * - **Deep links are dead.** `https://www.instagram.com/?variant=following` is claimed by the app
- *   but the parameter is ignored, and `instagram://feed?variant=following` does not resolve; both
- *   land on Home. The `variant-link` and `scheme-link` fixtures are the recorded proof. A click
- *   sequence is the only route, and no deep-link path exists in this adapter by design.
+ *   `tab_bar`/`clips_tab`/`feed_tab` are gone from the tree entirely (`following-feed`, `relaunch`
+ *   fixtures — which pin that this screen never classifies as the home feed, so no cover arms there).
  */
 object InstagramSurfaces : PlatformSurfaces {
 
@@ -49,29 +55,68 @@ object InstagramSurfaces : PlatformSurfaces {
     /** The Reels tab. The tab-vanish cover is drawn over THIS node's bounds. */
     const val ID_CLIPS_TAB = "com.instagram.android:id/clips_tab"
 
+    /**
+     * The Search/Explore tab ("Discover"). NOT covered: the tab must stay usable so the search box
+     * can be reached. The active state of this tab is what gates the search-page content cover.
+     */
+    const val ID_SEARCH_TAB = "com.instagram.android:id/search_tab"
+
+    /** The Home tab. Present in every bottom-nav dump; used only for active-tab detection. */
+    const val ID_FEED_TAB = "com.instagram.android:id/feed_tab"
+
+    /** The Messages tab. Present in every bottom-nav dump; used only for active-tab detection. */
+    const val ID_DIRECT_TAB = "com.instagram.android:id/direct_tab"
+
+    /** The Profile tab. Present in every bottom-nav dump; used only for active-tab detection. */
+    const val ID_PROFILE_TAB = "com.instagram.android:id/profile_tab"
+
+    /**
+     * The icon INSIDE a tab. Every tab shares this id, and the ACTIVE tab's icon reports
+     * `selected=true` while every tab FrameLayout reports `selected=false`.
+     *
+     * This is the one reliable "which tab is active" signal measured on IG 447 (`home.xml`: the
+     * active Home tab's `tab_icon` is selected; the other four are not). The old feature-detection
+     * code was reported dead because it keyed on the TAB nodes, which never report selection — the
+     * signal was one level down all along.
+     */
+    const val ID_TAB_ICON = "com.instagram.android:id/tab_icon"
+
+    /**
+     * The story tray ("reels tray") at the top of the Home feed, `[0,231][1080,611]` in the Home
+     * dump. Its bottom edge is where the home-feed content cover starts, leaving the stories usable.
+     * ABSENT from `home-scrolled` — the tray scrolls away — which is what [ContentCoverSpec.topFallback]
+     * is for.
+     */
+    const val ID_REELS_TRAY_CONTAINER = "com.instagram.android:id/reels_tray_container"
+
+    /**
+     * The top action-bar container, `[0,77][1080,231]` in every Home dump. The fallback top for the
+     * home cover once the story tray has scrolled away. **ABSENT from the Search screen** — device-
+     * captured 2026-10-08 (SurfaceInspector readout, Search tab): the Explore cover keyed on this as
+     * its top and never armed there, because the Search screen's top chrome is its own field
+     * ([ID_ACTION_BAR_SEARCH_EDIT_TEXT]).
+     */
+    const val ID_ACTION_BAR_LINEAR_LAYOUT = "com.instagram.android:id/action_bar_LinearLayout"
+
+    /**
+     * The Search screen's search field. THE top node for the Explore content cover: the cover starts
+     * at this field's BOTTOM edge, so the box stays tappable and everything below it (the suggestion
+     * grid) is covered. Device-captured 2026-10-08 — this id is the only chrome the Search readout
+     * showed for that bar, and it was present in every Search tree read.
+     */
+    const val ID_ACTION_BAR_SEARCH_EDIT_TEXT = "com.instagram.android:id/action_bar_search_edit_text"
+
     /** The Home-feed logo. Present only on Home, and only while the action bar is not scrolled away. */
     const val ID_TITLE_LOGO = "com.instagram.android:id/title_logo"
-
-    /** The clickable ancestor of [ID_TITLE_LOGO]. The steer's entry point — the logo itself is inert. */
-    const val ID_ACTION_BAR_TITLE_VIEW = "com.instagram.android:id/action_bar_title_view"
-
-    /** The Following activity's header. Its TEXT is what identifies that screen. */
-    const val ID_ACTION_BAR_TITLE = "com.instagram.android:id/action_bar_title"
-
-    /** One row of the title dropdown. Shared by every row, so it cannot identify a row alone. */
-    const val ID_CONTEXT_MENU_ITEM = "com.instagram.android:id/context_menu_item"
-
-    /** The label inside a dropdown row. This is what separates "Following" from "Favorites". */
-    const val ID_CONTEXT_MENU_ITEM_LABEL = "com.instagram.android:id/context_menu_item_label"
 
     /**
      * The Home feed's sticky story-tray header. The one Home marker that SURVIVES scrolling.
      *
      * Present in every Home-feed dump (`home`, `home-scrolled`, `coldstart`, `variant-link`,
-     * `scheme-link`) and absent from both Following dumps. It exists because `title_logo` does not
+     * `scheme-link`) and absent from every non-home dump. It exists because `title_logo` does not
      * survive a scroll — Instagram's action bar scrolls away — and without a second marker a user
-     * scrolling the feed would read as OTHER_TAB, reset the steer's memory, and get re-steered the
-     * moment they scrolled back up. See [classify].
+     * scrolling the feed would read as OTHER_TAB, and the home-feed content cover's surface gate
+     * would drop the cover the moment they scrolled. See [classify].
      */
     const val ID_STICKY_HEADER_LIST = "com.instagram.android:id/sticky_header_list"
 
@@ -79,14 +124,14 @@ object InstagramSurfaces : PlatformSurfaces {
     // Text labels. Version- and locale-fragile by nature; see NodeLocator.
     // ---------------------------------------------------------------------------------------
 
-    /** The Following screen's header text, and the dropdown row that reaches it. */
-    const val LABEL_FOLLOWING = "Following"
-
     /** `title_logo`'s content description. */
     const val DESC_HOME_FEED = "Instagram Home Feed"
 
     /** `clips_tab`'s content description. Fallback for [ID_CLIPS_TAB]. */
     const val DESC_REELS_TAB = "Reels"
+
+    /** `search_tab`'s content description. Fallback for [ID_SEARCH_TAB]. */
+    const val DESC_SEARCH_TAB = "Search and explore"
 
     // ---------------------------------------------------------------------------------------
     // Colours. THE one place to adjust them.
@@ -111,10 +156,10 @@ object InstagramSurfaces : PlatformSurfaces {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Reels only. Instagram's Explore tab is also a feature Nudge can block, but Explore is
-     * reachable by a swipe from the Home feed as well as by its tab, so covering the tab would
-     * imply an enforcement it does not deliver. Adding a key here is all a future Explore cover
-     * would need from this file.
+     * Reels only. The Search/Explore tab is deliberately NOT covered any more: the user needs the
+     * search box, so Explore is enforced by covering the suggestion GRID on that screen (see
+     * [contentCovers]) rather than by removing the tab. Explore still has no screen detector of its
+     * own; [activeTabs] is what recognises the Search screen for that cover.
      */
     override val vanishableTabs: Map<String, NodeLocator> = mapOf(
         "REELS" to NodeLocator(
@@ -124,36 +169,76 @@ object InstagramSurfaces : PlatformSurfaces {
     )
 
     /**
-     * The Following activity's header. Its TEXT is the first rung of [classify], and the only positive
-     * identification of that screen — `tab_bar` and `clips_tab` are simply absent there, and absence
-     * cannot tell the Following feed from a reel player.
-     *
-     * Matched by id only, deliberately. Matching on the text "Following" as well would make the
-     * locator find the dropdown ROW of the same name on the Home feed, and the classifier would then
-     * read an open menu as the destination screen.
+     * The active tab's `tab_icon` is selected; every tab FrameLayout is not. Measured on IG 447.
      */
-    override val titleLocator: NodeLocator = NodeLocator(viewIds = listOf(ID_ACTION_BAR_TITLE))
+    override val activeTabIndicatorId: String = ID_TAB_ICON
 
-    override val followingSteer: SteerRecipe = SteerRecipe(
-        // The ViewAnimator, NOT title_logo: the logo reports clickable=false, so a tap dispatched
-        // at it does nothing at all.
-        entryPoint = NodeLocator(viewIds = listOf(ID_ACTION_BAR_TITLE_VIEW)),
-        // Every row shares this id, so this locator finds rows, never THE row.
-        menuItem = NodeLocator(viewIds = listOf(ID_CONTEXT_MENU_ITEM)),
-        // The row is chosen by its label. `text` carries it on the TextView child; `contentDesc`
-        // carries it on the Button itself — both are in the dumps, so both are matched.
-        menuItemLabel = NodeLocator(
-            viewIds = listOf(ID_CONTEXT_MENU_ITEM_LABEL),
-            texts = listOf(LABEL_FOLLOWING),
-            contentDescriptions = listOf(LABEL_FOLLOWING),
-            // AND, not OR, and this is the one locator in the app that needs it. Every row in the
-            // dropdown carries `context_menu_item_label` -- "Favorites" as much as "Following" -- so
-            // the id alone picks whichever is first in the tree, and the label alone runs a substring
-            // search that a feed caption containing "following" satisfies. Only both together name
-            // the row. See NodeLocator.isScopedLabel.
-            scopedLabel = true
+    /**
+     * The active tabs whose page can legitimately classify as [HostSurface.HOME_FEED]: Home is the
+     * feed, and Reels is the same content named by its own tab (the tab opens the reel player, whose
+     * `clips_viewer_*` ids are the primary signal; these markers are the fallback).
+     *
+     * Every other active tab means the visible page is NOT the feed, and [classify] must not let a
+     * home-feed marker found ANYWHERE in the tree override that. See [classify] for the capture that
+     * forced the rule.
+     */
+    private val HOME_LIKE_ACTIVE_TABS = setOf("HOME", "REELS")
+
+    /**
+     * Every bottom-nav tab, keyed by the surface name the service reasons about. Only `"SEARCH"` is
+     * consumed today (the search-page content cover's gate); the rest are declared so the mapping is
+     * complete data rather than a one-off lookup.
+     */
+    override val activeTabs: Map<String, NodeLocator> = mapOf(
+        "HOME" to NodeLocator(viewIds = listOf(ID_FEED_TAB)),
+        "SEARCH" to NodeLocator(viewIds = listOf(ID_SEARCH_TAB)),
+        "REELS" to NodeLocator(viewIds = listOf(ID_CLIPS_TAB)),
+        "DIRECT" to NodeLocator(viewIds = listOf(ID_DIRECT_TAB)),
+        "PROFILE" to NodeLocator(viewIds = listOf(ID_PROFILE_TAB))
+    )
+
+    /**
+     * The two algorithmic regions a hard-blocked feature covers instead of blocking the whole app:
+     *
+     * - **REELS -> the home feed below the story tray.** Top is `reels_tray_container` (so stories
+     *   stay usable), falling back to the top action bar once the tray has scrolled away
+     *   (`home-scrolled` has no tray), bottom is the nav bar. Gated on the surface classifier
+     *   reporting HOME_FEED.
+     * - **EXPLORE -> the Search screen's suggestion grid, reels included.** Top is the Search
+     *   screen's OWN search field ([ID_ACTION_BAR_SEARCH_EDIT_TEXT] — the cover starts at that
+     *   field's bottom edge, so the box stays tappable; device-captured 2026-10-08, because the
+     *   `action_bar_LinearLayout` top this spec originally used is a HOME id and absent from the
+     *   Search tree, so the cover never armed there), bottom is the nav bar, and the gate is the
+     *   Search tab being active — so it can never fire on Messages or Profile. When the user taps
+     *   into the field the screen changes and the nav bar disappears, which hides this cover: the
+     *   search-active screen is deliberately untouched.
+     *
+     * Both fail toward HIDING: a missing node means no cover, never a guessed rectangle.
+     */
+    override val contentCovers: Map<String, ContentCoverSpec> = mapOf(
+        "REELS" to ContentCoverSpec(
+            top = NodeLocator(viewIds = listOf(ID_REELS_TRAY_CONTAINER)),
+            topFallback = NodeLocator(viewIds = listOf(ID_ACTION_BAR_LINEAR_LAYOUT)),
+            bottom = NodeLocator(viewIds = listOf(ID_TAB_BAR)),
+            surface = HostSurface.HOME_FEED,
+            label = "Suggested feed"
+        ),
+        "EXPLORE" to ContentCoverSpec(
+            top = NodeLocator(viewIds = listOf(ID_ACTION_BAR_SEARCH_EDIT_TEXT)),
+            bottom = NodeLocator(viewIds = listOf(ID_TAB_BAR)),
+            activeTab = "SEARCH",
+            label = "Search suggestions"
         )
     )
+
+    /**
+     * What [classify] keys on. Resolved by TARGETED lookup, not by the bounded harvest — see the
+     * interface KDoc. Device-found 2026-10-07: a feed big enough to exhaust the walk's budget made
+     * all three markers invisible, `classify` answered UNKNOWN on the Home feed, and the home cover
+     * never armed even though `tab_bar` was findable by id.
+     */
+    override val classifierViewIds: Set<String> =
+        setOf(ID_TITLE_LOGO, ID_TAB_BAR, ID_STICKY_HEADER_LIST)
 
     override fun navBarColor(nightMode: Boolean): Int =
         if (nightMode) NAV_BAR_COLOR_DARK else NAV_BAR_COLOR_LIGHT
@@ -163,10 +248,16 @@ object InstagramSurfaces : PlatformSurfaces {
      *
      * The ladder, and the evidence for each rung:
      *
-     * 1. **`action_bar_title` reads "Following" -> [HostSurface.FOLLOWING_FEED].** Following is its
-     *    own full-screen activity whose header carries that exact string in both `text` and
-     *    `contentDescription` (`following-feed`, `relaunch` fixtures). Checked FIRST because it is
-     *    the only positive identification we have, and because a warm relaunch resumes here.
+     * 1. **The ACTIVE tab names a non-home page -> [HostSurface.OTHER_TAB].** Presence alone does not
+     *    mean on-screen: Instagram's main activity keeps the other tabs' pages attached, so the tree
+     *    read on one tab carries another tab's nodes. Device-captured 2026-10-07 (`SurfaceInspector`
+     *    readout, Instagram on the DM tab, `activeTab=DIRECT`): the Messages tab's tree contained
+     *    `media_group`, `row_feed_button_like/comment/save` and `inline_follow_button` — the Home
+     *    feed's post nodes — and the old presence-only ladder called that screen the Home feed, which
+     *    hard-blocked Reels on Messages and left the home-feed content cover floating over it. The
+     *    selected `tab_icon` is the one measured signal that says WHICH attached page is showing, so
+     *    when it is available it is checked before any marker. Null (app exposes no selection, or
+     *    none is selected — the reel player, a story, a DM thread) falls through to the markers.
      *
      * 2. **`title_logo` present -> [HostSurface.HOME_FEED].** The logo is unique to the Home feed
      *    (`home`, `coldstart`, `variant-link`, `scheme-link`).
@@ -174,14 +265,12 @@ object InstagramSurfaces : PlatformSurfaces {
      * 3. **`tab_bar` AND `sticky_header_list` present -> [HostSurface.HOME_FEED].** This rung is
      *    the scrolled Home feed, and it is here because the measured dumps forced it:
      *    `home-scrolled` has **no `title_logo`** — Instagram's action bar scrolls away with the
-     *    content. Without this rung a scrolled feed falls to rung 4, reads as OTHER_TAB, resets the
-     *    steer's `attempted` memory, and the user gets the menu opened under them again every time
-     *    they scroll back to the top. `sticky_header_list` is present in all five Home dumps and in
-     *    neither Following dump, which is as much as the spike can prove; no dump of Search,
-     *    Messages or Profile was taken. The ordering is chosen so the unproven case fails SAFE: if
-     *    some other tab also carries `sticky_header_list` it reads as Home, and the worst outcome is
-     *    one steer attempt whose entry point does not exist, which times out and gives up silently.
-     *    The reverse mistake — a scrolled Home read as another tab — is a visible re-steer loop.
+     *    content. Without this rung a scrolled feed falls to rung 4, reads as OTHER_TAB, and the
+     *    home-feed content cover's surface gate drops the cover the moment the user scrolls — a
+     *    cover that hides itself on the very scroll that makes it matter. `sticky_header_list` is
+     *    present in all five Home dumps and in no non-home dump, which is as much as the spike can
+     *    prove. Rung 1 is what keeps this fail-open from mattering on another tab that carries the
+     *    marker too.
      *
      * 4. **`tab_bar` present, nothing above matched -> [HostSurface.OTHER_TAB].** A bottom-nav
      *    screen that is positively not the Home feed.
@@ -189,11 +278,13 @@ object InstagramSurfaces : PlatformSurfaces {
      * 5. **Otherwise -> [HostSurface.UNKNOWN].** The reel player, a story, a DM thread, settings.
      *    `tab_bar` is absent from all of them. We know nothing, so we change nothing.
      *
-     * Note what is NOT here: tab selection. Every tab reports `selected=false` in the dump,
-     * including the active one, so selection cannot answer any question this method is asked.
+     * Note what is NOT here: tab FRAME selection. Every tab frame reports `selected=false` in
+     * the dump, including the active one, so selection is read off the `tab_icon` child instead
+     * ([activeTabs] / [activeTabIndicatorId]) and travels in [SurfaceObservation.activeTab].
      */
     override fun classify(observation: SurfaceObservation): HostSurface {
-        if (observation.actionBarTitle == LABEL_FOLLOWING) return HostSurface.FOLLOWING_FEED
+        val activeTab = observation.activeTab
+        if (activeTab != null && activeTab !in HOME_LIKE_ACTIVE_TABS) return HostSurface.OTHER_TAB
 
         val ids = observation.presentViewIds
         if (ID_TITLE_LOGO in ids) return HostSurface.HOME_FEED

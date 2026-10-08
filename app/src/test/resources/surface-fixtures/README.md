@@ -51,18 +51,18 @@ scripts/scrub-surface-fixture.py <raw>/*.xml --out app/src/test/resources/surfac
 
 | File | What it is | What it pins |
 |---|---|---|
-| `home.xml` | Instagram Home feed, at the top | `HOME_FEED` via `title_logo`; `clips_tab` bounds `[216,1896][432,2028]`; every tab reports `selected=false` |
+| `home.xml` | Instagram Home feed, at the top | `HOME_FEED` via `title_logo`; `clips_tab` bounds `[216,1896][432,2028]`; every tab FRAME reports `selected=false`, but the ACTIVE Home tab's `tab_icon` child reports `selected=true` (the active-tab signal) |
 | `home-scrolled.xml` | The same feed, scrolled down | Still `HOME_FEED` — and **`title_logo` is gone**: the action bar scrolls away, which is why `InstagramSurfaces.classify` needs the `sticky_header_list` rung |
-| `following-feed.xml` | The Following screen | `FOLLOWING_FEED` via `action_bar_title` == "Following", and **no `clips_tab` node at all** — the cover must hide here because there is no nav bar to cover |
-| `relaunch.xml` | Warm relaunch of Instagram | Resumes ON Following, so `FOLLOWING_FEED` again |
-| `logo-menu.xml` | The title dropdown, open | The "Following" row is findable via `SteerRecipe.menuItemLabel`; rows share one id and only the label separates them |
+| `following-feed.xml` | The Following screen | A separate full-screen activity: **no `clips_tab`, no `tab_bar`** — classifies `UNKNOWN`, so no cover arms here (there is no nav bar to cover) |
+| `relaunch.xml` | Warm relaunch of Instagram | Resumes ON Following, so `UNKNOWN` again |
+| `logo-menu.xml` | The title dropdown, open | The recorded popup-window shape: the dump holds the popup ALONE — no `tab_bar`, no `title_logo` — so it reads `UNKNOWN` |
 | `coldstart.xml` | Cold start of Instagram | Resets to `HOME_FEED` |
-| `variant-link.xml` | After `https://www.instagram.com/?variant=following` | `HOME_FEED` — **recorded proof the deep link does not work** |
-| `scheme-link.xml` | After `instagram://feed?variant=following` | `HOME_FEED` — same, for the custom scheme |
+| `variant-link.xml` | After `https://www.instagram.com/?variant=following` | `HOME_FEED` — the parameter is claimed by the app and then ignored |
+| `scheme-link.xml` | After `instagram://feed?variant=following` | `HOME_FEED` — the custom scheme does not resolve |
 
-The last two are why the steer is a click sequence and not a deep link. The parameter is claimed by
-the app and then ignored; the scheme does not resolve. Both land on Home, and these files are the
-evidence rather than a claim in a commit message.
+The last two are home-feed trees recorded during the 2026-09-22 spike, and they pin the classifier's
+`title_logo` rung across tree variants no other fixture covers. The `Following`/`Favorites` strings
+survive scrubbing in `following-feed` / `relaunch` / `logo-menu` as Instagram's own chrome.
 
 ## Reading them in a test
 

@@ -22,8 +22,7 @@ class RuleWeakeningTest {
         autoKickCooldownSeconds: Int = 60,
         webDomains: String? = null,
         webBlockMode: String? = null,
-        tabVanish: Boolean = true,
-        followingSteer: Boolean = false
+        tabVanish: Boolean = true
     ) = BlockRule(
         packageName = "com.example",
         mode = mode,
@@ -35,8 +34,7 @@ class RuleWeakeningTest {
         autoKickCooldownSeconds = autoKickCooldownSeconds,
         webDomains = webDomains,
         webBlockMode = webBlockMode,
-        tabVanish = tabVanish,
-        followingSteer = followingSteer
+        tabVanish = tabVanish
     )
 
     // ── delay ──
@@ -467,8 +465,7 @@ class RuleWeakeningTest {
     }
 
     // ── tabVanish (Tab Vanish, v1.18.0) — turning it off removes the Reels-tab cover, so it is a
-    // one-directional weakening axis exactly like `enabled`. followingSteer is NOT an axis: it is
-    // a steer, not a block, so flipping it either way must never register as weakening. ──
+    // one-directional weakening axis exactly like `enabled`. ──
 
     @Test
     fun `turning tabVanish off is weakening`() {
@@ -488,19 +485,5 @@ class RuleWeakeningTest {
     fun `leaving tabVanish unchanged is not weakening`() {
         assertFalse(RuleWeakening.isWeakening(rule(tabVanish = true), rule(tabVanish = true)))
         assertFalse(RuleWeakening.isWeakening(rule(tabVanish = false), rule(tabVanish = false)))
-    }
-
-    @Test
-    fun `turning followingSteer on is not weakening`() {
-        assertFalse(
-            RuleWeakening.isWeakening(rule(followingSteer = false), rule(followingSteer = true))
-        )
-    }
-
-    @Test
-    fun `turning followingSteer off is not weakening`() {
-        assertFalse(
-            RuleWeakening.isWeakening(rule(followingSteer = true), rule(followingSteer = false))
-        )
     }
 }

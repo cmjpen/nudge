@@ -17,7 +17,7 @@
 # WHAT IT DOES:
 #   1. Confirms the device is reachable and prints Nudge's installed version.
 #   2. Screenshots the Instagram rule config (setup step).
-#   3. Clears logcat, then walks the human through 6 segments (a-f), pausing on
+#   3. Clears logcat, then walks the human through 7 segments (a-g), pausing on
 #      ENTER between each. Per segment: dumps the FULL logcat (raw, unfiltered —
 #      kept in case the detection code logs under a tag/message we didn't
 #      anticipate) AND a filtered copy matching known Nudge detection call
@@ -120,16 +120,16 @@ segment "a-reels-tab" \
 # Informational only — every segment still filters on the FULL DETECTION_PATTERN (see comment
 # above the variable), because a pattern silent in case a can be exactly the signal a later case
 # needs (e.g. "instagram clips viewer detected" fires from the reel PLAYER container per
-# InAppDetector.kt, a different code path than the Reels-tab selection check).
+# InAppDetector.kt, a different code path than the home-feed surface classification).
 DISCOVERED="$OUT_DIR/nudge-qa-ig-discovered-tags.txt"
 grep -oiE "$DETECTION_PATTERN" "$OUT_DIR/nudge-qa-ig-a-reels-tab-logcat-raw.txt" | sort -u > "$DISCOVERED" || true
 echo "Discovery (case a, informational): $(paste -sd, "$DISCOVERED" 2>/dev/null || echo none)"
 
 segment "b-home-feed" \
-  "Case b (issue #18): scroll Instagram's home feed until a reel/clip plays inline or full-screen (~30s)."
+  "Case b (issue #18): scroll Instagram's home feed ~30s. Expect: with a Reels HARD block + Tab Vanish, a black cover over the feed BELOW the story tray (stories usable), and NO full-screen block on the home feed."
 
 segment "c-explore" \
-  "Case c (issue #18): open Explore, browse the grid, then tap into a video from Explore."
+  "Case c (issue #18): open Explore, browse the grid, then tap into the search box and type. Expect: with an Explore HARD block, a black cover over the suggestion grid below the search box; the search box stays tappable and the cover disappears once you are typing."
 
 segment "d-explore-grid-no-video" \
   "Case d (issue #22): browse the Explore grid for ~30s WITHOUT opening any video. Expect: no overlay."
@@ -139,6 +139,9 @@ segment "e-stories" \
 
 segment "f-reels-then-away" \
   "Case f (issue #22): tap Reels tab, IMMEDIATELY go back to Home before a reel loads, then use the home feed normally ~30s. Watch for a stuck/late overlay."
+
+segment "g-messages-dm" \
+  "Case g (2026-10-07 regression): open the Messages tab (DM inbox) ~10s, open a DM thread ~10s, then your Profile tab ~10s. Expect: NO overlay and NO black cover on any of them (the small cover over the Reels tab is intended Tab Vanish). Instagram keeps other tabs' pages attached, so a Reels block or feed cover here means the page gates have stopped working."
 
 echo
 echo "== Capture complete =="

@@ -6,8 +6,8 @@ import com.astraedus.nudge.data.repository.BlockRuleRepository
 import com.astraedus.nudge.data.repository.ContentFilter
 import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.engine.BlockEngine
-import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.engine.ScheduleEvaluator
+import com.astraedus.nudge.domain.engine.RuleEvaluator
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
 import com.astraedus.nudge.domain.nuke.NukeEnforcement
@@ -42,7 +42,6 @@ class EvaluateBlockNukeTest {
         usageRepository = usageRepository,
         blockEngine = BlockEngine(ScheduleEvaluator()),
         ruleEvaluator = RuleEvaluator(),
-        scheduleEvaluator = ScheduleEvaluator(),
         preferences = mockk<NudgePreferences>(),
         contentFilter = mockk<ContentFilter>(),
         nukeEnforcement = NukeEnforcement { pkg ->

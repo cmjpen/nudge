@@ -12,7 +12,5 @@ data class ActiveRule(
     val grayscale: Boolean = false,
     val ruleName: String? = null,
     /** See [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish]. */
-    val tabVanish: Boolean = true,
-    /** See [com.astraedus.nudge.data.db.entity.BlockRule.followingSteer]. */
-    val followingSteer: Boolean = false
+    val tabVanish: Boolean = true
 )

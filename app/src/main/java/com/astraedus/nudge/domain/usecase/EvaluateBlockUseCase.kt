@@ -7,7 +7,6 @@ import com.astraedus.nudge.data.repository.UsageRepository
 import com.astraedus.nudge.domain.WebDomainMatcher
 import com.astraedus.nudge.domain.engine.BlockEngine
 import com.astraedus.nudge.domain.engine.RuleEvaluator
-import com.astraedus.nudge.domain.engine.ScheduleEvaluator
 import com.astraedus.nudge.domain.model.ActiveRule
 import com.astraedus.nudge.domain.model.BlockDecision
 import com.astraedus.nudge.domain.model.BlockMode
@@ -25,7 +24,6 @@ class EvaluateBlockUseCase @Inject constructor(
     private val usageRepository: UsageRepository,
     private val blockEngine: BlockEngine,
     private val ruleEvaluator: RuleEvaluator,
-    private val scheduleEvaluator: ScheduleEvaluator,
     private val preferences: NudgePreferences,
     private val contentFilter: ContentFilter,
     /**
@@ -79,10 +77,10 @@ class EvaluateBlockUseCase @Inject constructor(
      * Every rule that applies to [packageName] right now, as [ActiveRule]s, schedules NOT yet
      * applied (the engine applies those).
      *
-     * Extracted because a second caller appeared ([isFollowingSteerEnabled]) and this is the entire
-     * entity-to-domain mapping: a copy of it in that caller would be ~25 lines that silently stop
-     * agreeing the next time a column is added, which is exactly what happened to the four
-     * hand-written `when` blocks that `FeatureMode.toBlockMode` now replaces.
+     * Extracted into its own function because this is the ENTIRE entity-to-domain mapping: a second
+     * copy of it in any caller would be ~25 lines that silently stop agreeing the next time a column
+     * is added, which is exactly what happened to the four hand-written `when` blocks that
+     * `FeatureMode.toBlockMode` now replaces.
      */
     private suspend fun resolveActiveRules(packageName: String): List<ActiveRule> {
         val allRules = blockRuleRepository.getEnabledRules().first()
@@ -103,8 +101,7 @@ class EvaluateBlockUseCase @Inject constructor(
                 inAppFeatures = rule.inAppFeatures?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() },
                 grayscale = rule.grayscale,
                 webDomains = rule.webDomains,
-                tabVanish = rule.tabVanish,
-                followingSteer = rule.followingSteer
+                tabVanish = rule.tabVanish
             )
         }
 
@@ -118,22 +115,6 @@ class EvaluateBlockUseCase @Inject constructor(
 
         return ruleEvaluator.resolveRulesForPackage(packageName, ruleDataList, memberships)
     }
-
-    /**
-     * Whether any rule that applies to [packageName] RIGHT NOW opts into the Following steer.
-     *
-     * Not a [BlockDecision] field, and deliberately so: the steer runs while the app is being
-     * ALLOWED, and `BlockDecision.Allow` carries nothing. Answering it through the engine would
-     * have meant inventing a decision for "not blocked, but do something anyway", which is the
-     * shape [BlockMode.NONE]'s grayscale flag already fails at.
-     *
-     * The schedule IS honoured, so a rule scoped to 9-5 does not steer at 9pm: a per-rule toggle
-     * that ignored its own rule's schedule would be a different feature wearing the same switch.
-     */
-    suspend fun isFollowingSteerEnabled(packageName: String): Boolean =
-        resolveActiveRules(packageName).any {
-            it.enabled && it.followingSteer && scheduleEvaluator.isActiveNow(it)
-        }
 
     /**
      * Evaluate whether a detected web domain should be blocked.

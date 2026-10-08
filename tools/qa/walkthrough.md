@@ -23,23 +23,26 @@ point (the QA is about whether *natural* Instagram use trips detection correctly
 Run the script now: `tools/qa/ig-walkthrough-capture.sh`. Follow its prompts; they mirror the
 cases below in order.
 
-## The six cases (~30s each)
+## The seven cases (~30s each)
 
 ### a. Reels tab (issue #18)
 Open Instagram. Tap the **Reels** tab at the bottom. Let a reel play for ~10 seconds.
 **Expect:** Nudge's block overlay (delay countdown or hard-block screen) appears.
 
-### b. Home feed (issue #18)
-From Instagram's home feed, scroll down until a reel or video clip starts playing — either
-inline in the feed or full-screen. Keep scrolling/watching for ~30 seconds total.
-**Expect:** unclear going in — this is exactly what we're checking. Note whether the overlay
-ever appears while you're just scrolling the normal home feed.
+### b. Home feed (issue #18 — fixed)
+From Instagram's home feed, scroll down and keep scrolling/watching for ~30 seconds total.
+**Expect:** with a Reels HARD block and Tab Vanish on, a black box covers the feed BELOW the story
+tray — stories and the top bar stay usable, and the full-screen block screen does NOT appear on the
+home feed. If the cover does not appear, that is a finding: the measured markers
+(`reels_tray_container`, `action_bar_LinearLayout`, `tab_bar`) may have been renamed by an Instagram
+update.
 
-### c. Explore (issue #18)
-Tap **Explore** (magnifying glass). Browse the grid for a few seconds, then **tap into a video**
-from the grid and let it play.
-**Expect:** unclear going in — note whether the overlay appears once you're actually watching
-a video from Explore.
+### c. Explore (issue #18 — grid covered, search kept)
+Tap **Explore** (magnifying glass). Browse the grid for a few seconds.
+**Expect:** with an Explore HARD block, a black box covers the suggestion grid below the search box;
+the search box itself stays tappable. Tap into the search box and type: the cover disappears (the
+search-active screen has no nav bar), and results/recent searches are untouched. Tapping into a
+video still fires the reel-player block if a Reels rule is on.
 
 ### d. Explore grid, no video (issue #22 — false positive check)
 Tap **Explore** again. This time just **scroll the grid** for ~30 seconds — do NOT tap into any
@@ -55,6 +58,17 @@ Tap the **Reels** tab, then **immediately** tap back to **Home** before a reel h
 (don't wait for it to play). Then just use the home feed normally for ~30 seconds.
 **Expect:** NO overlay should appear late/stuck on the home feed from the aborted Reels-tab
 visit. If the overlay appears at a weird moment or won't dismiss, note exactly when.
+
+### g. Messages and Profile tabs (2026-10-07 regression)
+Tap the **Messages** tab (DM inbox) and stay there ~10 seconds, open a **DM thread** with someone
+and stay ~10 seconds, then go to your **Profile** tab and stay ~10 seconds.
+**Expect:** NO overlay and NO black cover on any of the three screens. The small cover over the Reels
+tab in the bottom bar is the intended Tab Vanish. Instagram keeps the other tabs' pages attached, so
+those trees carry the home feed's nodes; if a full-screen Reels block or the feed cover appears here,
+the classifier's page gates have stopped working. Check with the Nudge debug readout (Settings →
+Developer Options → Last host-app surface): on Messages it should read `activeTab=DIRECT`, and the
+`markers=` line should show the home markers as `present=true visible=false` — that line is what
+separates an attached off-screen page from a renamed id.
 
 ## When done
 

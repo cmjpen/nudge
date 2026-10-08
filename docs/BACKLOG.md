@@ -89,7 +89,8 @@ Full audit with `file:line` evidence and a fix order lives outside this repo:
 - [x] Enhanced stats visualizations — shipped and device-QA'd across v1.13.0 (insight pages) and v1.15.0 (day selection, one screen-time source, home dashboard charts). See `docs/architecture/stats-and-charts.md`.
 - [x] Dynamic version display from BuildConfig
 - [x] Tag-triggered GitHub Actions release pipeline (`.github/workflows/release.yml`)
-- [x] Instagram home feed detection — **superseded in v1.11.0**, which detects Instagram's reel player directly rather than inferring it from which bottom-nav tab is selected, so the blocked `selected`-state tree-walk described below is no longer the path. It also fixed the real user-facing gap (a reel opened from a DM). Original note, kept for context: code written but AccessibilityService API doesn't expose child node `selected` state through `findAccessibilityNodeInfosByText/ViewId`. Needs tree-walk approach: traverse from `rootInActiveWindow`, find ImageView nodes with `selected=true` in bottom nav, match to parent tab. See InAppDetector.kt.
+- [x] Instagram home feed detection — **implemented via measured surface markers (issue #18)**. The old path resolved features from bottom-nav tab selection, and every tab reports `selected=false` on current Instagram, so it was silently dead. `InAppDetector` now consumes the `HostSurface` classification from `InstagramSurfaces.classify` — `title_logo` while the action bar is visible, `tab_bar` + `sticky_header_list` once the feed is scrolled — replayed through production by `InAppDetectorInstagramDetectionTest` against the committed `home`/`home-scrolled` fixtures. v1.11.0's reel-player container check (the DM bypass) is unchanged and still runs first. Original note, kept for context: code written but AccessibilityService API doesn't expose child node `selected` state through `findAccessibilityNodeInfosByText/ViewId`. Needs tree-walk approach: traverse from `rootInActiveWindow`, find ImageView nodes with `selected=true` in bottom nav, match to parent tab. See InAppDetector.kt.
+- [ ] **Instagram Explore is not detected (issue #18), but its suggestion grid can be covered.** Tab selection at the FRAME level is dead, and no positive marker for the Search/Explore screen has been captured. What exists instead: an Explore HARD_BLOCK covers the Search screen's suggestion grid below the search box (gated on the Search tab being active, via the selected `tab_icon` child), so the search box stays usable and the search-active screen is untouched. That is a **region cover, not a screen block**: the grid is hidden, but the screen itself is not recognised, so nothing else on it is enforced. To add real detection: run `tools/qa/ig-walkthrough-capture.sh` against the Search/Explore screen, pick a positive container/id unique to it (the grid's own RecyclerView, the search field), add it to `InstagramSurfaces` as a classifier rung, and map it in `InAppDetector.detectInstagram`.
 - [ ] On-device QA for all v1.2 features — largely absorbed by the per-release device-QA gate (see the post-feature checklist in `CLAUDE.md`); no single outstanding sweep, but the two items below are still owed.
 - [ ] YouTube Shorts verification on device
 
@@ -254,16 +255,17 @@ also the reasoning for what would have to be true to pick one up.
 ## Noted 2026-08-31 (v1.15.1 QA): stay-awake devices legitimately show near-24h days
 Device QA of the screentime fix on the Pixel 3 (which has "stay awake while charging" on and lives on AC) showed ~17h "today" and several ~24h historical days. This is CORRECT: dumpsys usagestats confirmed the app genuinely was foreground with the screen on the whole time (no screen-off events ever fire on that device). Digital Wellbeing counts the same way. Do NOT "fix" this by distrusting long inherited sessions, that would under-count real long sessions (overnight video, navigation, charging docks). If it ever bothers users, the only defensible improvement is annotating, not clamping.
 
-## Tab Vanish / Following steer — known gaps at v1.18.0
+## Tab Vanish — known gaps (first noted at v1.18.0)
 
 - [ ] **`HostSurface.OTHER_TAB` is fixture-unverified.** The spike captured Home, Home-scrolled, the open
   dropdown, the Following screen, a warm relaunch, a cold start and both deep-link attempts — but not the
   Search, Messages or Profile tabs. `InstagramSurfaces.classify` distinguishes Home from another tab by
   `sticky_header_list` being present alongside `tab_bar`, which is load-bearing because Instagram hides
-  `title_logo` once the feed is scrolled (`home-scrolled.xml` proves it). If that id also appears on those
-  tabs we classify HOME_FEED, attempt a steer, find no entry point and no-op silently — ordered to fail in
-  that direction on purpose. Closing it is one capture per tab plus three assertions; do it the next time
-  the bench device has Instagram open.
+  `title_logo` once the feed is scrolled (`home-scrolled.xml` proves it). The 2026-10-07 device captures
+  (Messages, Profile, Search readouts) already closed the worst of it — presence-only classification there
+  fired a Reels block on screens with no reels — but no scrubbed FIXTURE of those tabs is committed yet, so
+  the rungs are pinned only by the readouts quoted in `InstagramSurfacesFixtureTest`. Closing it is one
+  scrubbed capture per tab plus three assertions; do it the next time the bench device has Instagram open.
 - [ ] **The cover is only as exact as one node's bounds.** `clips_tab` reported [216,1896][432,2028] on a
   1080x2160 Pixel 3, and the cover is drawn straight from `getBoundsInScreen`. Nothing verifies the
   rectangle does not overlap the neighbouring tabs on a device with a different density, a larger system
@@ -274,11 +276,12 @@ Device QA of the screentime fix on the Pixel 3 (which has "stay awake while char
   placement follows that automatically; an id RENAME would not, and the failure would be silent — the cover
   simply never appears. There is no signal we can watch for it from inside the app, so it will arrive as a
   user report. Keep `InstagramSurfaces` as the one file to edit when it does.
-- [ ] **YouTube: Shorts tab vanish + Subscriptions steer.** The same adapter, no new mechanism — what is
-  missing is a bench capture of the Shorts tab's bounds and the Subscriptions nav item, plus a product call
-  on the Shorts shelf INSIDE Subscriptions, which scrolls and so cannot be covered the same way. Also worth
-  surfacing as a tip rather than code: turning off YouTube watch history blanks the Home feed entirely
-  (Google-documented), which is a stronger intervention than any steer we can perform.
+- [ ] **YouTube: Shorts tab vanish.** The same adapter, no new mechanism — what is missing is a bench
+  capture of the Shorts tab's bounds, plus a product call on the Shorts shelf inside Subscriptions, which
+  scrolls and so cannot be covered the same way. Also worth surfacing as a tip rather than code: turning off
+  YouTube watch history blanks the Home feed entirely (Google-documented), which is a stronger intervention
+  than any in-app mechanism we could build. (The once-planned Subscriptions steer rode the removed Following
+  steer's machinery; see `docs/architecture/rules-and-features.md`.)
 
 ## [x] ~~A daily limit is enforced on RE-ENTRY, not mid-session~~ - RESOLVED in v1.18.4
 

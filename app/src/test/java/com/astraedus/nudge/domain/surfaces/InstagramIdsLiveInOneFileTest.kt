@@ -22,8 +22,8 @@ import org.junit.Test
  *
  * **TODO: `service/InAppDetector.kt` is the one legacy holder of Instagram view ids.** It predates
  * this seam and still carries the reel-player container ids (`clips_viewer_view_pager`,
- * `clips_video_container`, `clips_media_component`) plus the `tab_bar` tab-id lookup it uses for
- * feature detection. Moving them is a behavioural change to in-app feature detection, which is a
+ * `clips_video_container`, `clips_media_component`); its `tab_bar` tab-id lookup was deleted with
+ * issue #18's fix (tab selection is dead), so the containers are all that remain. Moving them is a behavioural change to in-app feature detection, which is a
  * different lane and a different risk; it is deliberately not part of this feature. When it is done,
  * delete it from [allowedFiles] and this gate tightens to one file with no other edit.
  */
@@ -100,8 +100,8 @@ class InstagramIdsLiveInOneFileTest {
      *
      * Asserted separately from the count above because it is the invariant with teeth for THIS
      * feature's own lane: the decision classes next to the adapter (`TabCoverPresence`,
-     * `TabCoverDecider`, `FollowingSteer`) must stay host-app-agnostic, and an id literal creeping
-     * into one of them is the specific regression that would make the seam pointless.
+     * `TabCoverDecider`) must stay host-app-agnostic, and an id literal creeping into one of them is
+     * the specific regression that would make the seam pointless.
      */
     @Test
     fun `no domain file except the adapter carries instagram view ids`() {

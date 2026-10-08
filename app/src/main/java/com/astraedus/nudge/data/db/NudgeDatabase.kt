@@ -28,7 +28,7 @@ import com.astraedus.nudge.data.db.entity.UsageEvent
  * keeps passing forever after a bump nobody remembered to make twice. One constant, two readers, and
  * the compiler holds them together.
  */
-internal const val NUDGE_DB_VERSION = 11
+internal const val NUDGE_DB_VERSION = 12
 
 @Database(
     entities = [
@@ -155,21 +155,75 @@ abstract class NudgeDatabase : RoomDatabase() {
         }
 
         /**
-         * Adds Tab Vanish and the experimental Following steer (v1.18.0), per-rule columns backing
-         * [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish] and
-         * [com.astraedus.nudge.data.db.entity.BlockRule.followingSteer].
+         * Adds Tab Vanish (v1.18.0), the per-rule column backing
+         * [com.astraedus.nudge.data.db.entity.BlockRule.tabVanish].
          *
-         * Both default to what a pre-migration rule already meant, not to the code-level default:
+         * It defaults to what a pre-migration rule already meant, not to the code-level default:
          * `tabVanish = 1` because every rule that existed before this feature had no cover at all,
          * and restoring one to the entity's new default (on) is the correct reading of "this rule
-         * hard-blocks Instagram REELS" now that the app can express a cover; `followingSteer = 0`
-         * because the steer is a brand-new, opt-in, experimental capability no existing rule ever
-         * asked for.
+         * hard-blocks Instagram REELS" now that the app can express a cover.
          */
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1")
-                db.execSQL("ALTER TABLE block_rules ADD COLUMN followingSteer INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Drops the `block_rules.followingSteer` column: the experimental Following steer the
+         * column backed has been removed from the app entirely.
+         *
+         * SQLite before 3.35 has no `DROP COLUMN`, and minSdk 26 ships far older engines, so this
+         * is the standard create/copy/drop/rename recreate — the same dance as MIGRATION_8_9. The
+         * new table must match Room's generated schema for
+         * [com.astraedus.nudge.data.db.entity.BlockRule] byte for byte or Room's post-migration
+         * validation throws on the next open. Every column's value is carried across untouched;
+         * the dropped column is default-0 for every rule that has it (the steer was opt-in and no
+         * UI besides the experimental toggle ever wrote 1 that survived), so nothing of value is
+         * lost.
+         */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `block_rules_new` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`packageName` TEXT, " +
+                        "`groupId` INTEGER, " +
+                        "`mode` TEXT NOT NULL, " +
+                        "`delaySeconds` INTEGER NOT NULL, " +
+                        "`dailyLimitMinutes` INTEGER, " +
+                        "`enabled` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`scheduleDays` TEXT, " +
+                        "`scheduleStartMinute` INTEGER, " +
+                        "`scheduleEndMinute` INTEGER, " +
+                        "`inAppFeatures` TEXT, " +
+                        "`grayscale` INTEGER NOT NULL, " +
+                        "`showCounter` INTEGER NOT NULL, " +
+                        "`autoKickAfter` INTEGER, " +
+                        "`showTimeRemaining` INTEGER NOT NULL, " +
+                        "`autoKickCooldownSeconds` INTEGER NOT NULL, " +
+                        "`webDomains` TEXT, " +
+                        "`webBlockMode` TEXT, " +
+                        "`autoKickAfterMinutes` INTEGER, " +
+                        "`tabVanish` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "INSERT INTO `block_rules_new` " +
+                        "(`id`, `packageName`, `groupId`, `mode`, `delaySeconds`, `dailyLimitMinutes`, " +
+                        "`enabled`, `createdAt`, `scheduleDays`, `scheduleStartMinute`, `scheduleEndMinute`, " +
+                        "`inAppFeatures`, `grayscale`, `showCounter`, `autoKickAfter`, `showTimeRemaining`, " +
+                        "`autoKickCooldownSeconds`, `webDomains`, `webBlockMode`, `autoKickAfterMinutes`, " +
+                        "`tabVanish`) " +
+                        "SELECT `id`, `packageName`, `groupId`, `mode`, `delaySeconds`, `dailyLimitMinutes`, " +
+                        "`enabled`, `createdAt`, `scheduleDays`, `scheduleStartMinute`, `scheduleEndMinute`, " +
+                        "`inAppFeatures`, `grayscale`, `showCounter`, `autoKickAfter`, `showTimeRemaining`, " +
+                        "`autoKickCooldownSeconds`, `webDomains`, `webBlockMode`, `autoKickAfterMinutes`, " +
+                        "`tabVanish` " +
+                        "FROM `block_rules`"
+                )
+                db.execSQL("DROP TABLE `block_rules`")
+                db.execSQL("ALTER TABLE `block_rules_new` RENAME TO `block_rules`")
             }
         }
     }

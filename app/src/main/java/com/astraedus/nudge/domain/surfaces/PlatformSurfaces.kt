@@ -4,8 +4,9 @@ package com.astraedus.nudge.domain.surfaces
  * Everything Nudge knows about ONE host app's on-screen surfaces, as pure data.
  *
  * Two features need it: **Tab Vanish** (draw a cover over the bottom-nav tab that opens a
- * hard-blocked feature, so the icon disappears and the tap is eaten) and the **Following steer**
- * (on arrival at a home feed, click through to the chronological following feed instead).
+ * hard-blocked feature, so the icon disappears and the tap is eaten) and the **content covers**
+ * (blank an algorithmic region — the home feed below the story tray, the Search screen's suggestion
+ * grid — instead of blocking the whole app).
  *
  * Both are node-tree features, and node trees are the thing a host app changes without warning.
  * Putting every selector behind this interface means a host-app update is a data edit in one file
@@ -28,24 +29,6 @@ interface PlatformSurfaces {
      */
     val vanishableTabs: Map<String, NodeLocator>
 
-    /** Present when this app has a "following"-style feed we can steer to; null when it does not. */
-    val followingSteer: SteerRecipe?
-
-    /**
-     * Where this app keeps the screen title that [classify] reads, or null when it has none.
-     *
-     * Needed because [classify] consumes [SurfaceObservation.actionBarTitle] and something has to tell
-     * the service layer which node that string comes from. Without it the title is always null, and
-     * for Instagram that is not a cosmetic loss: the title is the ONLY positive identification of the
-     * Following feed, so the steer's once-per-arrival memory would never be marked from the
-     * destination screen and a user who backed out of Following to Home could be steered again.
-     *
-     * Defaults to null so an adapter with no title screen declares nothing. A null title always
-     * classifies as [HostSurface.UNKNOWN], which means change nothing — the correct failure.
-     */
-    val titleLocator: NodeLocator?
-        get() = null
-
     /**
      * The ARGB colour the tab cover is painted with, so the vanished tab reads as empty nav bar
      * rather than as a black rectangle.
@@ -57,37 +40,110 @@ interface PlatformSurfaces {
 
     /** Which of this app's screens the given node-presence observation is. */
     fun classify(observation: SurfaceObservation): HostSurface
+
+    /**
+     * The view ids [classify] keys on, so the observer can resolve them with the framework's
+     * indexed lookup instead of relying on the bounded tree walk.
+     *
+     * This exists because the harvest that builds [SurfaceObservation.presentViewIds] is
+     * deliberately bounded (`HostNodeFinder.harvestViewIds`), and a real host-app tree can be large
+     * enough that the walk never reaches a marker deep in it. Device-found 2026-10-07: on an
+     * Instagram build with a big feed, the walk returned ZERO ids, `classify` answered UNKNOWN on
+     * the Home feed, and the home cover's surface gate failed even though a targeted
+     * `findAccessibilityNodeInfosByViewId(tab_bar)` found the node. The classifier's marker set is
+     * small and stable, so asking for it directly is cheaper AND correct at any tree size.
+     *
+     * Defaults to empty so an adapter that never declares its markers keeps the old behaviour.
+     */
+    val classifierViewIds: Set<String>
+        get() = emptySet()
+
+    /**
+     * Bottom-nav tabs whose ACTIVE state is exposed in the tree, keyed by an adapter-defined surface
+     * key (e.g. `"SEARCH"`). Empty for an adapter whose host app exposes none.
+     *
+     * This exists because some surfaces have no positive container marker of their own. Instagram's
+     * Search/Explore screen is the worked example: it has no unique view id we have measured, but
+     * the ACTIVE tab's `tab_icon` child reports `selected=true` while every tab FrameLayout reports
+     * `selected=false` (measured on IG 447, `home.xml`; see `InstagramSurfacesFixtureTest`). That
+     * distinction is the one reliable "which tab is this" signal we have.
+     */
+    val activeTabs: Map<String, NodeLocator>
+        get() = emptyMap()
+
+    /** The child id whose `selected` state marks the active tab, or null when the app exposes none. */
+    val activeTabIndicatorId: String?
+        get() = null
+
+    /**
+     * Regions a hard-blocked feature may COVER instead of blocking whole, keyed by feature key
+     * (matching `InAppDetector.Feature.key`).
+     *
+     * This is Tab Vanish's sibling for content that is not a tab: Instagram's home feed below the
+     * story tray, and the Search screen's suggestion grid below the search box. Both leave the
+     * functional chrome (stories, the search field) usable, which is the whole point — a cover over
+     * a scrolling feed is only viable where the covered region is exactly the part the user does not
+     * need to reach.
+     */
+    val contentCovers: Map<String, ContentCoverSpec>
+        get() = emptyMap()
 }
 
 /**
- * The three nodes a following steer clicks through, in order.
+ * A rectangle to cover on a host-app surface, derived from two nodes: it starts at the BOTTOM of
+ * [top] and ends at the TOP of [bottom], spanning [bottom]'s width.
  *
- * Instagram's shape, which is why it is three and not two: the Home-feed logo is not itself
- * clickable, the menu items all share one resource id, and only a CHILD of each item carries the
- * label that tells "Following" from "Favorites".
+ * @param top the node whose bottom edge is the cover's top (Instagram: the story tray).
+ * @param topFallback used when [top] is not on screen — the scrolled-away story tray. Null means
+ *   "no cover" rather than a guessed rectangle.
+ * @param bottom the node whose top edge is the cover's bottom (Instagram: the nav bar).
+ * @param surface only active while the classifier reports this surface; null = no surface gate.
+ * @param activeTab only active while the adapter's active tab is this key; null = no tab gate.
+ * @param label what the covered region is, for the cover's TalkBack description.
+ *
+ * Every gate fails toward HIDING the cover. A cover drawn in the wrong place is worse than no cover:
+ * it hides something the user needed or eats a tap meant for it.
  */
-data class SteerRecipe(
-    /** The clickable node that opens the menu (Instagram: the title ViewAnimator, not the logo). */
-    val entryPoint: NodeLocator,
-    /** The clickable menu row. Shared by every row, so it cannot identify WHICH row on its own. */
-    val menuItem: NodeLocator,
-    /** The label inside the wanted row. This is what picks "Following" out of the menu. */
-    val menuItemLabel: NodeLocator
+data class ContentCoverSpec(
+    val top: NodeLocator,
+    val bottom: NodeLocator,
+    val label: String,
+    val topFallback: NodeLocator? = null,
+    val surface: HostSurface? = null,
+    val activeTab: String? = null
 )
+
+/**
+ * The pure arithmetic for a [ContentCoverSpec]'s rectangle, separated from the node lookups so a
+ * recorded hierarchy can drive it (`docs/testing-strategy.md` rule (b)).
+ */
+object ContentCoverPlacement {
+    /**
+     * The rectangle between the two nodes, or null when either is absent or the result is not a
+     * real rectangle (see [TabCoverPlacement.of]). The cover spans [bottom]'s width so it lines up
+     * with the chrome underneath it.
+     */
+    fun of(top: TabCoverPlacement?, bottom: TabCoverPlacement?): TabCoverPlacement? {
+        if (top == null || bottom == null) return null
+        return TabCoverPlacement.of(
+            left = bottom.x,
+            top = top.y + top.height,
+            right = bottom.x + bottom.width,
+            bottom = bottom.y
+        )
+    }
+}
 
 /**
  * Which screen of the host app is showing.
  *
- * Deliberately coarse. Nudge only needs to answer three questions — may we steer, should we forget
- * that we already steered, and do we know anything at all — and a coarse closed set keeps every
- * consumer's `when` exhaustive.
+ * Deliberately coarse. Nudge only needs to answer two questions — is this the home feed (the
+ * surface the content covers and the Reels-equivalent feature detection gate on), and do we know
+ * anything at all — and a coarse closed set keeps every consumer's `when` exhaustive.
  */
 enum class HostSurface {
-    /** The app's main/home feed: the one place a steer may start. */
+    /** The app's main/home feed: the algorithmic feed the content covers gate on. */
     HOME_FEED,
-
-    /** The following-style feed: the steer's destination, reached deliberately or by us. */
-    FOLLOWING_FEED,
 
     /** A different bottom-nav tab (search, messages, profile): positively not the home feed. */
     OTHER_TAB,
@@ -100,20 +156,34 @@ enum class HostSurface {
  * ONE tree read, reduced to the facts a classifier needs — and deliberately nothing else.
  *
  * It holds no nodes. The service walks the live tree once, collects the resource ids it saw and the
- * one title string, and hands over this value; a JVM test builds the identical value from a
- * recorded hierarchy dump. Because it is plain data, the classification RULE is the same object
- * under test as in production, which is the only way a fixture can contradict the code instead of
- * agreeing with it.
+ * active tab, and hands over this value; a JVM test builds the identical value from a recorded
+ * hierarchy dump. Because it is plain data, the classification RULE is the same object under test
+ * as in production, which is the only way a fixture can contradict the code instead of agreeing
+ * with it.
  *
  * Keeping nodes out is also a privacy constraint. Nudge has no internet permission and its device
  * fixtures are committed to a PUBLIC repository; an observation that carried arbitrary node text
- * would make every future fixture a transcript of someone's feed. Ids are structure, and the one
- * text field is a host-app chrome label. See `app/src/test/resources/surface-fixtures/README.md`.
+ * would make every future fixture a transcript of someone's feed. It carries ids and selection
+ * state only — structure, never content. See `app/src/test/resources/surface-fixtures/README.md`.
  *
- * @param presentViewIds every fully-qualified resource id seen in this tree read.
- * @param actionBarTitle the host app's action-bar title, when the tree has one; null otherwise.
+ * @param presentViewIds every fully-qualified resource id seen in this tree read **and visible to
+ *   the user**. The visibility half is load-bearing, not a tidy-up: a host app that keeps other
+ *   pages attached (Instagram) leaves their ids in the tree while a different page is on screen, and
+ *   a classifier reading presence alone called the Messages and Profile pages the Home feed
+ *   (device-reported 2026-10-07). `HostNodeFinder.presentViewIds` / `harvestViewIds` are where the
+ *   filter lives.
+ * @param activeTab the active bottom-nav tab the adapter resolved from this same tree read, or null
+ *   when the app exposes no selection or none is selected. It is the page's own identity, and it has
+ *   to live in the observation because node PRESENCE does not mean on-screen: Instagram's main
+ *   activity keeps the other tabs' pages attached, so a DM inbox's tree also carries the home feed's
+ *   `title_logo` / `sticky_header_list` / feed-post ids. Device-captured 2026-10-07 (`SurfaceInspector`
+ *   readout, Instagram on the DM tab): `activeTab=DIRECT` in a tree that contained `media_group`,
+ *   `row_feed_button_like/comment/save` and `inline_follow_button`. A classifier reading presence
+ *   alone called that screen the Home feed, which hard-blocked Reels on the Messages tab and left the
+ *   home-feed content cover floating over it. The classifier's page gate reads this field; see
+ *   `InstagramSurfaces.classify`.
  */
 data class SurfaceObservation(
     val presentViewIds: Set<String>,
-    val actionBarTitle: String? = null
+    val activeTab: String? = null
 )

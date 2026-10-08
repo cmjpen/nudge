@@ -5,6 +5,7 @@ import com.astraedus.nudge.domain.events.A11yEventType
 import com.astraedus.nudge.domain.events.AccessibilityEventRecord
 import com.astraedus.nudge.domain.interaction.InteractionCounter
 import com.astraedus.nudge.domain.logging.NudgeLog
+import com.astraedus.nudge.domain.surfaces.HostSurface
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -768,7 +769,8 @@ class InteractionHandlerTest {
 
         override fun detectFeature(
             packageName: String,
-            rootNode: AccessibilityNodeInfo?
+            rootNode: AccessibilityNodeInfo?,
+            hostSurface: HostSurface?
         ): InAppDetector.Feature? {
             detectCallCount++
             return featureToReturn

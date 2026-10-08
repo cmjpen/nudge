@@ -2,15 +2,10 @@ package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.domain.surfaces.InstagramSurfaces
-import com.astraedus.nudge.domain.surfaces.NodeLocator
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -23,8 +18,8 @@ import org.junit.Test
  * (`findPlacement`'s three-line `Rect` read) are documented as residue on the function itself and
  * deliberately have no test.
  *
- * Every Instagram id and label below is READ FROM [InstagramSurfaces] rather than typed out. Two
- * reasons: fixture honesty (`docs/testing-strategy.md` rule (b) — never hand-type a value production
+ * Every Instagram id below is READ FROM [InstagramSurfaces] rather than typed out. Two reasons:
+ * fixture honesty (`docs/testing-strategy.md` rule (b) — never hand-type a value production
  * derives), and the adapter is the one file in the repo allowed to hold `com.instagram.android:id/…`
  * strings at all.
  */
@@ -41,7 +36,7 @@ class HostNodeFinderTest {
         viewId: String? = null,
         text: String? = null,
         desc: String? = null,
-        clickable: Boolean = false,
+        visible: Boolean = true,
         children: List<AccessibilityNodeInfo> = emptyList(),
         byId: Map<String, List<AccessibilityNodeInfo>> = emptyMap(),
         byText: Map<String, List<AccessibilityNodeInfo>> = emptyMap()
@@ -50,7 +45,7 @@ class HostNodeFinderTest {
         every { n.viewIdResourceName } returns viewId
         every { n.text } returns text
         every { n.contentDescription } returns desc
-        every { n.isClickable } returns clickable
+        every { n.isVisibleToUser } returns visible
         every { n.parent } returns null
         every { n.childCount } returns children.size
         every { n.getChild(any()) } answers { children.getOrNull(firstArg()) }
@@ -68,295 +63,6 @@ class HostNodeFinderTest {
         every { child.parent } returns parent
     }
 
-    private val clipsTab = NodeLocator(viewIds = listOf(InstagramSurfaces.ID_CLIPS_TAB))
-
-    // ------------------------------------------------------------------------------------------
-    // Strategy order: ids first, then text, then content-description.
-    // ------------------------------------------------------------------------------------------
-
-    @Test
-    fun `a view id match is found`() {
-        val tab = node(viewId = InstagramSurfaces.ID_CLIPS_TAB, clickable = true)
-        val root = node(byId = mapOf(InstagramSurfaces.ID_CLIPS_TAB to listOf(tab)))
-
-        assertTrue(HostNodeFinder.exists(root, clipsTab))
-        assertSame(tab, HostNodeFinder.findClickable(root, clipsTab))
-    }
-
-    /**
-     * The fallback fires only when the reliable key found nothing. An UNSCOPED locator carrying both
-     * must not consult the localized, copy-fragile handle while the compiled-in one is answering.
-     *
-     * Deliberately NOT written against `followingSteer.menuItemLabel`, which is the app's one SCOPED
-     * locator and obeys a different rule (see the scoped cases below). This test previously used it
-     * and asserted the OR behaviour, i.e. it had the old semantics written into it as a contract —
-     * re-stated rather than deleted, per `tasks/lessons.md` 2026-09-21 ("a test whose numbers encode
-     * the bug must be re-stated"). The chain it is actually about is exercised here on a locator that
-     * genuinely wants it.
-     */
-    @Test
-    fun `text is consulted only when the view ids miss`() {
-        val locator = NodeLocator(
-            viewIds = listOf(InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL),
-            texts = listOf(InstagramSurfaces.LABEL_FOLLOWING)
-        )
-        assertFalse("this case is about the OR chain, so the locator must not be scoped", locator.isScopedLabel)
-
-        val label = node(text = InstagramSurfaces.LABEL_FOLLOWING, clickable = true)
-        val idsMiss = node(byText = mapOf(InstagramSurfaces.LABEL_FOLLOWING to listOf(label)))
-        assertSame(
-            "text must be the fallback when no id resolves",
-            label,
-            HostNodeFinder.findClickable(idsMiss, locator)
-        )
-
-        val byId = node(viewId = InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL, clickable = true)
-        val idsHit = node(
-            byId = mapOf(InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL to listOf(byId)),
-            byText = mapOf(InstagramSurfaces.LABEL_FOLLOWING to listOf(label))
-        )
-        assertSame(byId, HostNodeFinder.findClickable(idsHit, locator))
-        verify(exactly = 0) { idsHit.findAccessibilityNodeInfosByText(any()) }
-    }
-
-    /**
-     * THE case that decides what Nudge taps inside somebody else's app.
-     *
-     * Instagram's dropdown rows all carry `context_menu_item_label` and are told apart only by their
-     * label, so the real locator is SCOPED: id AND label. Given two rows, the finder must return the
-     * one labelled "Following" — not simply the first one the framework hands back, which is how the
-     * steer would end up opening Favorites.
-     */
-    @Test
-    fun `a scoped locator picks the row whose label matches, not the first row`() {
-        val favorites = node(
-            viewId = InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL,
-            text = "Favorites",
-            clickable = true
-        )
-        val following = node(
-            viewId = InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL,
-            text = InstagramSurfaces.LABEL_FOLLOWING,
-            clickable = true
-        )
-        // Favorites FIRST, so an id-only lookup would return the wrong row.
-        val root = node(
-            byId = mapOf(
-                InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL to listOf(favorites, following)
-            )
-        )
-
-        val locator = InstagramSurfaces.followingSteer.menuItemLabel
-        assertTrue("the production menu locator must be scoped", locator.isScopedLabel)
-        assertSame(following, HostNodeFinder.findClickable(root, locator))
-    }
-
-    /**
-     * A scoped locator must NOT fall back to a text search when the id is present but no label
-     * matches. `findAccessibilityNodeInfosByText` is a case-insensitive substring search over the
-     * whole tree, so on the home feed a caption containing the word "following" matches and the
-     * clickable ancestor of a caption is somebody's post. Nothing found must mean nothing found.
-     */
-    @Test
-    fun `a scoped locator does not fall back to a text search`() {
-        val unmatchedRow = node(
-            viewId = InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL,
-            text = "Favorites",
-            clickable = true
-        )
-        val caption = node(text = "following my dreams", clickable = true)
-        val root = node(
-            byId = mapOf(InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL to listOf(unmatchedRow)),
-            byText = mapOf(InstagramSurfaces.LABEL_FOLLOWING to listOf(caption))
-        )
-
-        assertNull(HostNodeFinder.findClickable(root, InstagramSurfaces.followingSteer.menuItemLabel))
-        verify(exactly = 0) { root.findAccessibilityNodeInfosByText(any()) }
-    }
-
-    /**
-     * The regression that would have cost us Tab Vanish entirely. The Reels tab locator pairs
-     * `clips_tab` with the content-description "Reels" so that EITHER can find the tab when a host
-     * build exposes only one — so it must stay unscoped. Deriving "scoped" from "carries both an id
-     * and a label" (the first version of this feature did) silently turns that fallback into a
-     * requirement and the cover stops appearing in every locale whose description is not English.
-     */
-    @Test
-    fun `the reels tab locator is not scoped, so either handle can find it`() {
-        val tabLocator = InstagramSurfaces.vanishableTabs.getValue("REELS")
-        assertFalse(
-            "the tab locator must remain OR: id or content-description, whichever this build exposes",
-            tabLocator.isScopedLabel
-        )
-
-        val byDescOnly = node(desc = InstagramSurfaces.DESC_REELS_TAB, clickable = true)
-        val root = node(children = listOf(byDescOnly))
-
-        assertTrue(
-            "a tab carrying only the content-description must still be found",
-            HostNodeFinder.exists(root, tabLocator)
-        )
-    }
-
-    /**
-     * `findAccessibilityNodeInfosByText` matches case-insensitive SUBSTRINGS, so the framework hands
-     * back nodes a locator does not actually want. "Followingsuggestions" must not be taken for the
-     * "Following" row — the steer would click the wrong thing in somebody else's app.
-     */
-    @Test
-    fun `a substring hit from the framework text finder is rejected`() {
-        val nearMiss = node(text = InstagramSurfaces.LABEL_FOLLOWING + " suggestions", clickable = true)
-        val root = node(byText = mapOf(InstagramSurfaces.LABEL_FOLLOWING to listOf(nearMiss)))
-
-        assertNull(
-            HostNodeFinder.findClickable(root, NodeLocator(texts = listOf(InstagramSurfaces.LABEL_FOLLOWING)))
-        )
-    }
-
-    @Test
-    fun `the exact text hit is picked out of a list of near misses`() {
-        val nearMiss = node(text = "Not " + InstagramSurfaces.LABEL_FOLLOWING, clickable = true)
-        val exact = node(text = InstagramSurfaces.LABEL_FOLLOWING, clickable = true)
-        val root = node(byText = mapOf(InstagramSurfaces.LABEL_FOLLOWING to listOf(nearMiss, exact)))
-
-        assertSame(
-            exact,
-            HostNodeFinder.findClickable(root, NodeLocator(texts = listOf(InstagramSurfaces.LABEL_FOLLOWING)))
-        )
-    }
-
-    /** The content-description walk is the only strategy with no framework finder behind it. */
-    @Test
-    fun `a content description is found by the walk when ids and text both miss`() {
-        val tab = node(desc = InstagramSurfaces.DESC_REELS_TAB, clickable = true)
-        val root = node(children = listOf(node(), tab))
-        val locator = InstagramSurfaces.vanishableTabs.getValue("REELS")
-
-        assertTrue(HostNodeFinder.exists(root, locator))
-        assertSame(tab, HostNodeFinder.findClickable(root, locator))
-    }
-
-    /**
-     * The walk is CAPPED, because it runs on the accessibility hot path — a firehose of
-     * content-change events (a measured ~800 in three minutes of Instagram use), each of which would
-     * otherwise breadth-first the whole feed. A match past the cap is reported as absent, which is
-     * the correct failure for a fragile fallback.
-     */
-    @Test
-    fun `the content description walk respects its node cap`() {
-        val needle = node(desc = InstagramSurfaces.DESC_REELS_TAB)
-        val filler = node(desc = "not it")
-        val locator = NodeLocator(contentDescriptions = listOf(InstagramSurfaces.DESC_REELS_TAB))
-
-        // The root itself is dequeued first, so the last child the walk can reach sits at
-        // CONTENT_DESC_NODE_LIMIT - 2. One past that is unreachable by construction.
-        val reachable = HostNodeFinder.CONTENT_DESC_NODE_LIMIT - 2
-        val within = List(HostNodeFinder.CONTENT_DESC_NODE_LIMIT + 100) {
-            if (it == reachable) needle else filler
-        }
-        assertTrue(
-            "a match at the last reachable index must be found",
-            HostNodeFinder.exists(node(children = within), locator)
-        )
-
-        val beyond = List(HostNodeFinder.CONTENT_DESC_NODE_LIMIT + 100) {
-            if (it == reachable + 1) needle else filler
-        }
-        assertFalse(
-            "a match one node past the cap must read as absent, not blow the hot path's budget",
-            HostNodeFinder.exists(node(children = beyond), locator)
-        )
-    }
-
-    // ------------------------------------------------------------------------------------------
-    // findClickable: the walk UP. This is the function's whole reason to exist.
-    // ------------------------------------------------------------------------------------------
-
-    /**
-     * The exact measured Instagram shape: `title_logo` is an ImageView reporting `clickable=false`,
-     * and the node that actually responds is its `action_bar_title_view` ViewAnimator parent. A tap
-     * dispatched at the logo does nothing at all, silently — so returning it would be a steer that
-     * fails for a reason no log line explains.
-     */
-    @Test
-    fun `findClickable walks up from an inert match to its clickable ancestor`() {
-        val logo = node(viewId = InstagramSurfaces.ID_TITLE_LOGO, clickable = false)
-        val titleView = node(viewId = InstagramSurfaces.ID_ACTION_BAR_TITLE_VIEW, clickable = true)
-        parentOf(logo, titleView)
-        val root = node(byId = mapOf(InstagramSurfaces.ID_TITLE_LOGO to listOf(logo)))
-
-        assertSame(
-            titleView,
-            HostNodeFinder.findClickable(root, NodeLocator(viewIds = listOf(InstagramSurfaces.ID_TITLE_LOGO)))
-        )
-    }
-
-    /** The other measured shape: a row's label TextView under the clickable `context_menu_item`. */
-    @Test
-    fun `findClickable walks up from a menu label to its clickable row`() {
-        val label = node(viewId = InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL, text = InstagramSurfaces.LABEL_FOLLOWING)
-        val row = node(viewId = InstagramSurfaces.ID_CONTEXT_MENU_ITEM, clickable = true)
-        parentOf(label, row)
-        val root = node(byId = mapOf(InstagramSurfaces.ID_CONTEXT_MENU_ITEM_LABEL to listOf(label)))
-
-        assertSame(row, HostNodeFinder.findClickable(root, InstagramSurfaces.followingSteer.menuItemLabel))
-    }
-
-    @Test
-    fun `findClickable returns null when nothing matches`() {
-        assertNull(HostNodeFinder.findClickable(node(), clipsTab))
-    }
-
-    /**
-     * A match with nothing clickable above it is reported as NO match. Handing back a node that
-     * cannot be clicked is precisely the failure this function exists to prevent, and the caller's
-     * "not found" path is the one that should run.
-     */
-    @Test
-    fun `findClickable returns null when nothing in the chain is clickable`() {
-        val inert = node(viewId = InstagramSurfaces.ID_TITLE_LOGO)
-        val chain = (0 until HostNodeFinder.CLICKABLE_ANCESTOR_DEPTH + 2).map { node() }
-        parentOf(inert, chain.first())
-        chain.zipWithNext { child, parent -> parentOf(child, parent) }
-        parentOf(chain.last(), null)
-        val root = node(byId = mapOf(InstagramSurfaces.ID_TITLE_LOGO to listOf(inert)))
-
-        assertNull(
-            HostNodeFinder.findClickable(root, NodeLocator(viewIds = listOf(InstagramSurfaces.ID_TITLE_LOGO)))
-        )
-    }
-
-    @Test
-    fun `an empty locator can never match`() {
-        val root = node(byId = mapOf("anything" to listOf(node(clickable = true))))
-        assertFalse(HostNodeFinder.exists(root, NodeLocator()))
-        assertNull(HostNodeFinder.findClickable(root, NodeLocator()))
-    }
-
-    // ------------------------------------------------------------------------------------------
-    // Ownership. The returned node is the caller's; everything else is recycled.
-    // ------------------------------------------------------------------------------------------
-
-    @Test
-    fun `the node handed back is not recycled, and the ones beside it are`() {
-        val wanted = node(viewId = InstagramSurfaces.ID_CLIPS_TAB, clickable = true)
-        val spare = node(viewId = InstagramSurfaces.ID_CLIPS_TAB, clickable = true)
-        val root = node(byId = mapOf(InstagramSurfaces.ID_CLIPS_TAB to listOf(wanted, spare)))
-
-        assertSame(wanted, HostNodeFinder.findClickable(root, clipsTab))
-        verify(exactly = 0) { wanted.recycle() }
-        verify(exactly = 1) { spare.recycle() }
-    }
-
-    @Test
-    fun `exists recycles everything it found`() {
-        val tab = node(viewId = InstagramSurfaces.ID_CLIPS_TAB)
-        val root = node(byId = mapOf(InstagramSurfaces.ID_CLIPS_TAB to listOf(tab)))
-
-        assertTrue(HostNodeFinder.exists(root, clipsTab))
-        verify(exactly = 1) { tab.recycle() }
-    }
-
     // ------------------------------------------------------------------------------------------
     // Never throws. A host app's tree can go away mid-read, and this service dying means blocking
     // stops completely.
@@ -369,35 +75,15 @@ class HostNodeFinderTest {
         every { root.findAccessibilityNodeInfosByText(any()) } throws IllegalStateException("stale")
         every { root.childCount } throws IllegalStateException("stale")
 
-        assertNull(HostNodeFinder.findClickable(root, clipsTab))
-        assertFalse(HostNodeFinder.exists(root, clipsTab))
-        assertNull(HostNodeFinder.textOf(root, clipsTab))
-        assertNull(HostNodeFinder.findPlacement(root, clipsTab))
+        assertNull(HostNodeFinder.findPlacement(root, InstagramSurfaces.vanishableTabs.getValue("REELS")))
+        assertNull(HostNodeFinder.activeTab(root, InstagramSurfaces))
         assertEquals(emptySet<String>(), HostNodeFinder.presentViewIds(root, listOf(InstagramSurfaces.ID_CLIPS_TAB)))
         assertEquals(emptySet<String>(), HostNodeFinder.harvestViewIds(root, "com.example:id/"))
     }
 
     // ------------------------------------------------------------------------------------------
-    // textOf and the two id readers.
+    // presentViewIds and the two id readers.
     // ------------------------------------------------------------------------------------------
-
-    @Test
-    fun `textOf prefers text and falls back to the content description`() {
-        val titled = node(viewId = InstagramSurfaces.ID_ACTION_BAR_TITLE, text = InstagramSurfaces.LABEL_FOLLOWING)
-        val described = node(viewId = InstagramSurfaces.ID_ACTION_BAR_TITLE, desc = InstagramSurfaces.LABEL_FOLLOWING)
-        val locator = NodeLocator(viewIds = listOf(InstagramSurfaces.ID_ACTION_BAR_TITLE))
-
-        assertEquals(
-            InstagramSurfaces.LABEL_FOLLOWING,
-            HostNodeFinder.textOf(node(byId = mapOf(InstagramSurfaces.ID_ACTION_BAR_TITLE to listOf(titled))), locator)
-        )
-        assertEquals(
-            "the measured Following header carries the string in contentDescription too",
-            InstagramSurfaces.LABEL_FOLLOWING,
-            HostNodeFinder.textOf(node(byId = mapOf(InstagramSurfaces.ID_ACTION_BAR_TITLE to listOf(described))), locator)
-        )
-        assertNull(HostNodeFinder.textOf(node(), locator))
-    }
 
     @Test
     fun `presentViewIds reports only the ids that resolve`() {
@@ -409,6 +95,40 @@ class HostNodeFinderTest {
                 root,
                 listOf(InstagramSurfaces.ID_TAB_BAR, InstagramSurfaces.ID_CLIPS_TAB)
             )
+        )
+    }
+
+    /**
+     * Presence is not on-screen — the 2026-10-07 report family. Instagram keeps the other tabs'
+     * pages attached, so a marker id resolves in a tree whose visible page is a different tab (the
+     * Profile page's tree carries the home feed's `title_logo`). An id whose only matches are off
+     * screen must not enter the observation, or `classify` calls the Profile page the home feed and a
+     * Reels hard block fires there.
+     */
+    @Test
+    fun `presentViewIds ignores an id whose only matches are off screen`() {
+        val offscreen = node(viewId = InstagramSurfaces.ID_TITLE_LOGO, visible = false)
+        val root = node(byId = mapOf(InstagramSurfaces.ID_TITLE_LOGO to listOf(offscreen)))
+
+        assertEquals(
+            emptySet<String>(),
+            HostNodeFinder.presentViewIds(root, listOf(InstagramSurfaces.ID_TITLE_LOGO))
+        )
+    }
+
+    /**
+     * The framework's first hit is not necessarily the visible one — a recycled cell and its live
+     * replacement share an id — so EVERY match is checked, not just the first.
+     */
+    @Test
+    fun `presentViewIds accepts an id when any match is on screen`() {
+        val offscreen = node(viewId = InstagramSurfaces.ID_TITLE_LOGO, visible = false)
+        val onscreen = node(viewId = InstagramSurfaces.ID_TITLE_LOGO, visible = true)
+        val root = node(byId = mapOf(InstagramSurfaces.ID_TITLE_LOGO to listOf(offscreen, onscreen)))
+
+        assertEquals(
+            setOf(InstagramSurfaces.ID_TITLE_LOGO),
+            HostNodeFinder.presentViewIds(root, listOf(InstagramSurfaces.ID_TITLE_LOGO))
         )
     }
 
@@ -444,5 +164,95 @@ class HostNodeFinderTest {
             setOf(InstagramSurfaces.ID_TAB_BAR),
             HostNodeFinder.harvestViewIds(tree, prefix, limit = 1)
         )
+    }
+
+    /**
+     * The walk reports visible ids only by default — an attached page's ids must not enter a
+     * classifier's input — while the debug inspector can ask for everything, because the ids it
+     * HIDES are exactly what explains a misclassified screen.
+     */
+    @Test
+    fun `harvestViewIds skips off-screen nodes unless the caller asks for them`() {
+        val prefix = InstagramSurfaces.packageName + ":id/"
+        val tree = node(
+            viewId = InstagramSurfaces.ID_TAB_BAR,
+            children = listOf(
+                node(viewId = InstagramSurfaces.ID_STICKY_HEADER_LIST, visible = false)
+            )
+        )
+
+        assertEquals(
+            setOf(InstagramSurfaces.ID_TAB_BAR),
+            HostNodeFinder.harvestViewIds(tree, prefix)
+        )
+        assertEquals(
+            setOf(InstagramSurfaces.ID_TAB_BAR, InstagramSurfaces.ID_STICKY_HEADER_LIST),
+            HostNodeFinder.harvestViewIds(tree, prefix, visibleOnly = false)
+        )
+    }
+
+    /**
+     * The two facts a phone report needs to be actionable: `present=false` is a renamed id,
+     * `present=true visible=false` is an attached off-screen page. The distinction is what the
+     * 2026-10-07 readout could not make, and guessing between the two cost a device cycle.
+     */
+    @Test
+    fun `markerDiagnostics separates a renamed id from an off-screen one`() {
+        val offscreen = node(viewId = InstagramSurfaces.ID_TITLE_LOGO, visible = false)
+        val root = node(
+            byId = mapOf(
+                InstagramSurfaces.ID_TITLE_LOGO to listOf(offscreen),
+                InstagramSurfaces.ID_TAB_BAR to listOf(node(viewId = InstagramSurfaces.ID_TAB_BAR))
+            )
+        )
+
+        assertEquals(
+            listOf(
+                "title_logo present=true visible=false",
+                "tab_bar present=true visible=true",
+                "sticky_header_list present=false visible=false"
+            ),
+            HostNodeFinder.markerDiagnostics(
+                root,
+                listOf(
+                    InstagramSurfaces.ID_TITLE_LOGO,
+                    InstagramSurfaces.ID_TAB_BAR,
+                    InstagramSurfaces.ID_STICKY_HEADER_LIST
+                )
+            )
+        )
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Active tab: the tab FRAMES never report selection; the ACTIVE tab's tab_icon child does.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    fun `the selected tab icon names its owning tab`() {
+        val icon = node(viewId = InstagramSurfaces.ID_TAB_ICON)
+        every { icon.isSelected } returns true
+        val searchTab = node(viewId = InstagramSurfaces.ID_SEARCH_TAB)
+        parentOf(icon, searchTab)
+
+        val root = node(byId = mapOf(InstagramSurfaces.ID_TAB_ICON to listOf(icon)))
+        assertEquals("SEARCH", HostNodeFinder.activeTab(root, InstagramSurfaces))
+    }
+
+    @Test
+    fun `an unselected icon or no indicator means no active tab`() {
+        val icon = node(viewId = InstagramSurfaces.ID_TAB_ICON)
+        every { icon.isSelected } returns false
+        val searchTab = node(viewId = InstagramSurfaces.ID_SEARCH_TAB)
+        parentOf(icon, searchTab)
+        val root = node(byId = mapOf(InstagramSurfaces.ID_TAB_ICON to listOf(icon)))
+        assertNull(HostNodeFinder.activeTab(root, InstagramSurfaces))
+
+        // A selected icon that belongs to no tab (the top action bar reuses this id) must not be
+        // mistaken for a tab.
+        val stray = node(viewId = InstagramSurfaces.ID_TAB_ICON)
+        every { stray.isSelected } returns true
+        parentOf(stray, null)
+        val strayRoot = node(byId = mapOf(InstagramSurfaces.ID_TAB_ICON to listOf(stray)))
+        assertNull(HostNodeFinder.activeTab(strayRoot, InstagramSurfaces))
     }
 }

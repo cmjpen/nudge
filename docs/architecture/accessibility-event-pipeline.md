@@ -229,16 +229,16 @@ the sitting. Their windows also differ on purpose — the arrival ends the momen
 front while the sitting holds for two minutes, because *is this block worth a row* and *is the user
 still in this app* have different safe directions.
 
-**And the Following steer shares it too, one release later (issue [#56](https://github.com/astraedus/nudge/issues/56)).**
-The steer's once-per-arrival memory was cleared from `hideAllOverlays`, which the same screen-off
-receiver calls to tear down overlays — so the third consumer was still running the falsified
-premise, and a thirty-second display timeout on the Home feed re-steered a user who had deliberately
-switched back to it. It now resets from `onSittingEnded` on **every** end cause (a `resetHostAppActuation`
-call beside the departure report above), because all three causes are departures by this model's own
-definition and Home-then-return is the plainest "next visit" there is. Note the pattern: one premise,
-three consumers, three separate releases to finish removing it. When a definition here changes, the
-question to ask is *who else believes the old one* — `FollowingSteerVisitWiringContractTest` now pins
-the answer as a discovered set rather than a memory.
+**And a third consumer, one release later (issue [#56](https://github.com/astraedus/nudge/issues/56)): the
+since-removed Following steer.** The steer's once-per-arrival memory was cleared from `hideAllOverlays`, which
+the same screen-off receiver calls to tear down overlays — so the third consumer was still running the falsified
+premise, and a thirty-second display timeout on the Home feed re-steered a user who had deliberately switched
+back to it. It was moved to `onSittingEnded` on **every** end cause, because all three causes are departures by
+this model's own definition and Home-then-return is the plainest "next visit" there is. The steer is gone now
+(its click-into-another-app mechanism was removed; see `docs/architecture/rules-and-features.md`), but the
+pattern stands: one premise, three consumers, three separate releases to finish removing it. When a definition
+here changes, the question to ask is *who else believes the old one* — and the answer is a discovered set, not a
+memory.
 
 **An absence is cancelled by PRESENCE, not only by a navigation (issue [#64](https://github.com/astraedus/nudge/issues/64)).**
 The away clock is evidence of absence, and until 1.18.2 the only evidence of PRESENCE the model would

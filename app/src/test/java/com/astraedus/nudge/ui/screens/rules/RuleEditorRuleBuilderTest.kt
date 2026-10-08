@@ -27,8 +27,7 @@ class RuleEditorRuleBuilderTest {
         showCounter: Boolean = true,
         webDomains: String? = null,
         webBlockMode: String? = null,
-        tabVanish: Boolean = true,
-        followingSteer: Boolean = false
+        tabVanish: Boolean = true
     ) = RuleEditorUiState(
         packageName = "com.example.app",
         existingRuleId = 7L,
@@ -42,15 +41,14 @@ class RuleEditorRuleBuilderTest {
         originalAutoKickAfterMinutes = originalAutoKickAfterMinutes,
         webDomains = webDomains,
         webBlockMode = webBlockMode,
-        tabVanish = tabVanish,
-        followingSteer = followingSteer
+        tabVanish = tabVanish
     )
 
-    // ── tab vanish / following steer (regression) ──
+    // ── tab vanish (regression) ──
 
     /**
-     * Same regression as `webDomains` below, one feature later. This editor has no UI for either
-     * flag and rebuilds the whole rule, so before they were threaded through, opening an Instagram
+     * Same regression as `webDomains` below, one feature later. This editor has no UI for the
+     * flag and rebuilds the whole rule, so before it was threaded through, opening an Instagram
      * rule here and saving ANY unrelated change silently turned a switched-off tab cover back ON.
      */
     @Test
@@ -58,21 +56,11 @@ class RuleEditorRuleBuilderTest {
         assertFalse(RuleEditorViewModel.buildRule(state(tabVanish = false)).tabVanish)
     }
 
-    /**
-     * The other direction, and the one that loses a feature the user deliberately enabled: the
-     * Following steer defaults to OFF, so dropping it here would switch it off on every save.
-     */
-    @Test
-    fun `saving preserves a following steer the user switched on`() {
-        assertTrue(RuleEditorViewModel.buildRule(state(followingSteer = true)).followingSteer)
-    }
-
     @Test
     fun `the defaults round-trip unchanged`() {
         val rule = RuleEditorViewModel.buildRule(state())
 
         assertTrue("tab vanish defaults on", rule.tabVanish)
-        assertFalse("the steer defaults off", rule.followingSteer)
     }
 
     // ── web domains (regression) ──

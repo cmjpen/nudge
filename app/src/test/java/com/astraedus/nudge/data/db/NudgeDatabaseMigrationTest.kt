@@ -171,17 +171,66 @@ class NudgeDatabaseMigrationTest {
     }
 
     @Test
-    fun `MIGRATION_10_11 adds tabVanish and followingSteer columns`() {
+    fun `MIGRATION_10_11 adds tabVanish column`() {
         val db = RecordingDatabase()
 
         NudgeDatabase.MIGRATION_10_11.migrate(db.proxy)
 
         assertEquals(
-            listOf(
-                "ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1",
-                "ALTER TABLE block_rules ADD COLUMN followingSteer INTEGER NOT NULL DEFAULT 0"
-            ),
+            listOf("ALTER TABLE block_rules ADD COLUMN tabVanish INTEGER NOT NULL DEFAULT 1"),
             db.sql
+        )
+    }
+
+    /**
+     * The Following steer's removal (v1.20.0): its per-rule column goes the way `usage_events`'s
+     * dead `durationMs` did (MIGRATION_8_9) — create/copy/drop/rename, because SQLite < 3.35 has no
+     * `DROP COLUMN` and minSdk 26 predates it.
+     */
+    @Test
+    fun `MIGRATION_11_12 recreates block_rules without followingSteer and keeps every row`() {
+        val db = RecordingDatabase()
+
+        NudgeDatabase.MIGRATION_11_12.migrate(db.proxy)
+
+        assertEquals("expected create/copy/drop/rename, got: ${db.sql}", 4, db.sql.size)
+        val (create, copy, drop, rename) = db.sql
+
+        assert(create.startsWith("CREATE TABLE IF NOT EXISTS `block_rules_new`")) { create }
+        // Must match Room's generated schema for BlockRule exactly or validation fails on open.
+        assert(create.contains("`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL")) { create }
+        listOf(
+            "packageName", "groupId", "mode", "delaySeconds", "dailyLimitMinutes", "enabled",
+            "createdAt", "scheduleDays", "scheduleStartMinute", "scheduleEndMinute",
+            "inAppFeatures", "grayscale", "showCounter", "autoKickAfter", "showTimeRemaining",
+            "autoKickCooldownSeconds", "webDomains", "webBlockMode", "autoKickAfterMinutes",
+            "tabVanish"
+        ).forEach { assert(create.contains("`$it`")) { "missing column $it in: $create" } }
+        assert(!create.contains("followingSteer")) { "followingSteer must not be recreated: $create" }
+
+        // The rows are user data (rules are the product) — never drop-and-start-over.
+        assert(copy.startsWith("INSERT INTO `block_rules_new`")) { copy }
+        assert(copy.contains("SELECT")) { copy }
+        assert(copy.contains("FROM `block_rules`")) { copy }
+        assert(!copy.contains("followingSteer")) { copy }
+
+        assertEquals("DROP TABLE `block_rules`", drop)
+        assertEquals("ALTER TABLE `block_rules_new` RENAME TO `block_rules`", rename)
+    }
+
+    @Test
+    fun `block_rules entity declares no followingSteer field`() {
+        // Class-level guard: the column was dropped in MIGRATION_11_12, so the entity must not
+        // still declare it — Room would fail schema validation against the migrated table.
+        val steerFields = com.astraedus.nudge.data.db.entity.BlockRule::class.java.declaredFields
+            .map { it.name }
+            .filter { it.contains("steer", ignoreCase = true) }
+
+        assertEquals(
+            "block_rules must not carry following-steer columns — the feature was removed. " +
+                "Found: $steerFields",
+            emptyList<String>(),
+            steerFields
         )
     }
 
@@ -197,7 +246,8 @@ class NudgeDatabaseMigrationTest {
             NudgeDatabase.MIGRATION_7_8,
             NudgeDatabase.MIGRATION_8_9,
             NudgeDatabase.MIGRATION_9_10,
-            NudgeDatabase.MIGRATION_10_11
+            NudgeDatabase.MIGRATION_10_11,
+            NudgeDatabase.MIGRATION_11_12
         )
 
         // Read from production, not hand-typed: a hand-kept constant here is exactly the

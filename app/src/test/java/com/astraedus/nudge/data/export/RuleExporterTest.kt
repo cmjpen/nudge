@@ -355,20 +355,19 @@ class RuleExporterTest {
     }
 
     /**
-     * v1.18.0's Tab Vanish / Following steer round trip. `tabVanish=false` on this rule means the
-     * user deliberately turned OFF the default-on cover — losing that on a restore would silently
-     * turn it back on, the same class of regression `webBlockMode`'s round trip above guards.
+     * v1.18.0's Tab Vanish round trip. `tabVanish=false` on this rule means the user deliberately
+     * turned OFF the default-on cover — losing that on a restore would silently turn it back on,
+     * the same class of regression `webBlockMode`'s round trip above guards.
      */
     @Test
-    fun `roundtrip preserves tabVanish=false and followingSteer=true`() {
+    fun `roundtrip preserves tabVanish=false`() {
         val rules = listOf(
             BlockRule(
                 id = 1,
                 packageName = "com.instagram.android",
                 mode = "HARD_BLOCK",
                 enabled = true,
-                tabVanish = false,
-                followingSteer = true
+                tabVanish = false
             )
         )
 
@@ -378,17 +377,15 @@ class RuleExporterTest {
         assertNull(result.error)
         assertEquals(1, result.rules.size)
         assertFalse(result.rules[0].tabVanish)
-        assertTrue(result.rules[0].followingSteer)
     }
 
     /**
-     * A file with neither key — every backup written before v1.18.0 — must restore as
+     * A file without the key — every backup written before v1.18.0 — must restore as
      * `tabVanish=true` (matching the entity's new default: those rules had no cover of their own,
-     * and "on" is the correct reading of them now) and `followingSteer=false` (a brand-new,
-     * opt-in, experimental capability no old export could have carried).
+     * and "on" is the correct reading of them now).
      */
     @Test
-    fun `import of a pre-v1_18_0 export without tabVanish or followingSteer keys defaults them on and off`() {
+    fun `import of a pre-v1_18_0 export without tabVanish defaults it on`() {
         val json = """
         {
           "version": 1,
@@ -409,7 +406,36 @@ class RuleExporterTest {
         assertNull(result.error)
         assertEquals(1, result.rules.size)
         assertTrue(result.rules[0].tabVanish)
-        assertFalse(result.rules[0].followingSteer)
+    }
+
+    /**
+     * A v1.18.x file's `followingSteer` key (that feature's per-rule flag, since removed) must be
+     * IGNORED rather than rejected: an old backup restores cleanly, the key just means nothing.
+     */
+    @Test
+    fun `import tolerates a followingSteer key from a v1_18_x export`() {
+        val json = """
+        {
+          "version": 1,
+          "exportedAt": 1700000000000,
+          "rules": [{
+            "packageName": "com.instagram.android",
+            "groupName": null,
+            "mode": "HARD_BLOCK",
+            "delaySeconds": 15,
+            "enabled": true,
+            "tabVanish": true,
+            "followingSteer": true
+          }],
+          "groups": []
+        }
+        """.trimIndent()
+
+        val result = exporter.importRules(json)
+
+        assertNull(result.error)
+        assertEquals(1, result.rules.size)
+        assertTrue(result.rules[0].tabVanish)
     }
 
     @Test
