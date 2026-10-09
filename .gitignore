@@ -27,5 +27,5 @@ extension/.wxt/
 # where the next `git add -A` would sweep them into an unrelated commit.
 /[0-9][0-9]-*.png
 
-# Local screenshot dumps (device captures, QA output) — never part of the repo.
+# Local screenshot dumps (device captures, QA output)
 /screenshots/

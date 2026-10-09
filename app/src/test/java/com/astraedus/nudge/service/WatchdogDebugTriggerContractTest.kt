@@ -124,7 +124,9 @@ class WatchdogDebugTriggerContractTest {
         assertFalse(
             "A copy of WatchdogDebugReceiver must never appear in src/main, the debug source set " +
                 "IS the guarantee that it cannot ship",
-            File(file(receiver).path.replace("/debug/", "/main/")).exists()
+            // Normalised separators: File.path carries '\' on Windows, and the /debug/ -> /main/
+            // swap below must find the main copy, not silently no-op into the receiver itself.
+            File(file(receiver).path.replace('\\', '/').replace("/debug/", "/main/")).exists()
         )
     }
 

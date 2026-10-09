@@ -2,6 +2,8 @@ package com.astraedus.nudge.service
 
 import android.view.accessibility.AccessibilityNodeInfo
 import com.astraedus.nudge.domain.surfaces.InstagramSurfaces
+import com.astraedus.nudge.domain.surfaces.NodeLocator
+import com.astraedus.nudge.domain.surfaces.TabCoverPlacement
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -63,6 +65,29 @@ class HostNodeFinderTest {
         every { child.parent } returns parent
     }
 
+    /**
+     * Give [node] on-screen bounds, read through production's own `getBoundsInScreen` residue.
+     *
+     * `Rect` field writes need no android implementation (the same fact `TabCoverOverlayManager`'s
+     * tests stand on), which is what makes the WHICH-NODE-did-we-read question testable after all:
+     * the two findPlacement tests below distinguish their nodes by their rectangles.
+     */
+    private fun reportsBounds(
+        node: AccessibilityNodeInfo,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int
+    ) {
+        every { node.getBoundsInScreen(any()) } answers {
+            val r = firstArg<android.graphics.Rect>()
+            r.left = left
+            r.top = top
+            r.right = right
+            r.bottom = bottom
+        }
+    }
+
     // ------------------------------------------------------------------------------------------
     // Never throws. A host app's tree can go away mid-read, and this service dying means blocking
     // stops completely.
@@ -79,6 +104,55 @@ class HostNodeFinderTest {
         assertNull(HostNodeFinder.activeTab(root, InstagramSurfaces))
         assertEquals(emptySet<String>(), HostNodeFinder.presentViewIds(root, listOf(InstagramSurfaces.ID_CLIPS_TAB)))
         assertEquals(emptySet<String>(), HostNodeFinder.harvestViewIds(root, "com.example:id/"))
+    }
+
+    /**
+     * THE 2026-10-08 report family, both captures. A settled Search page ticked `activeTab=SEARCH`
+     * (the gate passing) with `cover EXPLORE placement=null` for a minute and a half, in a tree
+     * whose readout said `tab_bar present=true visible=true` — and the Profile page attached
+     * (`action_bar_username_container`, `avatar_image_view`) from the switch that got there.
+     *
+     * The reconciliation: `markerDiagnostics` checks `any { it.isVisibleToUser }`, but
+     * `findPlacement` read `nodes[0]` — the FIRST hit. An attached off-screen page can duplicate
+     * an id, its node reports junk bounds, `TabCoverPlacement.of` rejects them, and the cover never
+     * arms while the markers line says the id is visible. The cover's own lookup must obey the same
+     * law the observation already obeys: presence is not on-screen.
+     *
+     * Counterfactual by construction: the first hit reports `[0,0][0,0]` — under first-hit
+     * semantics `TabCoverPlacement.of` rejects that and the placement is null, which is exactly the
+     * readout the device produced.
+     */
+    @Test
+    fun `findPlacement reads the bounds of the VISIBLE match, not the first hit`() {
+        val offscreen = node(viewId = InstagramSurfaces.ID_CLIPS_TAB, visible = false)
+        reportsBounds(offscreen, 0, 0, 0, 0)
+        val onscreen = node(viewId = InstagramSurfaces.ID_CLIPS_TAB, visible = true)
+        reportsBounds(onscreen, 216, 1896, 432, 2028)
+        val root = node(byId = mapOf(InstagramSurfaces.ID_CLIPS_TAB to listOf(offscreen, onscreen)))
+
+        assertEquals(
+            TabCoverPlacement(x = 216, y = 1896, width = 216, height = 132),
+            HostNodeFinder.findPlacement(root, InstagramSurfaces.vanishableTabs.getValue("REELS"))
+        )
+    }
+
+    /**
+     * The other half of the same law. An id whose every match is off screen has no on-screen
+     * rectangle, and a cover placed from an attached page's STALE-looking bounds would be an
+     * opaque rectangle drawn somewhere the user is not looking — the failure direction every
+     * placement rule in this feature already documents ("a cover drawn in the wrong place is worse
+     * than no cover"). Fail toward hiding.
+     */
+    @Test
+    fun `findPlacement refuses to place from matches that are all off screen`() {
+        val offscreen = node(viewId = InstagramSurfaces.ID_TAB_BAR, visible = false)
+        // Deliberately REAL-looking bounds: accepting these would draw a cover at a plausible
+        // rectangle the user cannot see behind, which is worse than the null the junk-bounds case
+        // already produced.
+        reportsBounds(offscreen, 0, 1896, 1080, 2028)
+        val root = node(byId = mapOf(InstagramSurfaces.ID_TAB_BAR to listOf(offscreen)))
+
+        assertNull(HostNodeFinder.findPlacement(root, NodeLocator(viewIds = listOf(InstagramSurfaces.ID_TAB_BAR))))
     }
 
     // ------------------------------------------------------------------------------------------
@@ -192,9 +266,11 @@ class HostNodeFinderTest {
     }
 
     /**
-     * The two facts a phone report needs to be actionable: `present=false` is a renamed id,
-     * `present=true visible=false` is an attached off-screen page. The distinction is what the
-     * 2026-10-07 readout could not make, and guessing between the two cost a device cycle.
+     * The three facts a phone report needs to be actionable: `present=false` is a renamed id,
+     * `present=true visible=false` is an attached off-screen page, and `matches=2 visible=true`
+     * is the 2026-10-08 shape — an attached duplicate alongside the live node, which is exactly
+     * what made `findPlacement`'s first hit the wrong one while this line still said visible=true.
+     * Without the count, "visible=true" cannot tell one live node from a live node plus a ghost.
      */
     @Test
     fun `markerDiagnostics separates a renamed id from an off-screen one`() {
@@ -208,9 +284,9 @@ class HostNodeFinderTest {
 
         assertEquals(
             listOf(
-                "title_logo present=true visible=false",
-                "tab_bar present=true visible=true",
-                "sticky_header_list present=false visible=false"
+                "title_logo present=true visible=false matches=1",
+                "tab_bar present=true visible=true matches=1",
+                "sticky_header_list present=false visible=false matches=0"
             ),
             HostNodeFinder.markerDiagnostics(
                 root,
@@ -220,6 +296,19 @@ class HostNodeFinderTest {
                     InstagramSurfaces.ID_STICKY_HEADER_LIST
                 )
             )
+        )
+    }
+
+    /** The duplicate detector: an attached ghost plus the live node reads `matches=2`. */
+    @Test
+    fun `markerDiagnostics counts matches so an attached duplicate is visible in the readout`() {
+        val ghost = node(viewId = InstagramSurfaces.ID_TAB_BAR, visible = false)
+        val live = node(viewId = InstagramSurfaces.ID_TAB_BAR, visible = true)
+        val root = node(byId = mapOf(InstagramSurfaces.ID_TAB_BAR to listOf(ghost, live)))
+
+        assertEquals(
+            listOf("tab_bar present=true visible=true matches=2"),
+            HostNodeFinder.markerDiagnostics(root, listOf(InstagramSurfaces.ID_TAB_BAR))
         )
     }
 

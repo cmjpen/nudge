@@ -1411,3 +1411,22 @@ in the source, and the counterfactual carries the behavioural proof instead.
   DEBUGGABLE flag) BEFORE touching the device, refuse by default, make the switch an explicit
   opt-in (`ALLOW_CERT_SWITCH=1`), and print the way back on exit. Pinned by
   `scripts/test-cert-guard.sh`.
+
+## 2026-10-08, the Search cover's diagnostic contradicted the code it diagnosed
+
+- **A diagnostic line and the code it describes must share ONE predicate, or the readout can
+  contradict itself.** `markerDiagnostics` reported `tab_bar present=true visible=true` while
+  `findPlacement`, reading the same id from the same tree, produced nothing -- because the
+  diagnostic checked `any { it.isVisibleToUser }` and the placement read `nodes[0]`. Two predicates
+  over one id in two functions is how a user's bug report becomes "impossible": the evidence says
+  the node is visible, the behaviour says it is not, and both are telling the truth. When a
+  diagnostic exists to explain a lookup, derive both from the same selection rule (here: first
+  VISIBLE match, now shared) and make the diagnostic carry the match COUNT, so "visible=true" can
+  distinguish one live node from a live node plus a ghost duplicate.
+- **A teardown is only survivable if the very next event can rebuild.** The cover tear-down on a
+  blind read (a context menu's window makes `rootInActiveWindow` the menu alone) was correct -- the
+  defect was that the menu's own OPEN had armed the 2s content debounce its CLOSE needed to elapse,
+  and a settled suggestion grid fires no further events. Any "hide on uncertain input" design owes
+  an answer to "what event re-arms it, and can that event be swallowed by a gate the uncertainty
+  itself set?". The readout made this legible in hindsight: the last recorded tree was the menu,
+  and no tick followed it.

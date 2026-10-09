@@ -4,6 +4,16 @@ All notable changes to Nudge are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- **Instagram's Search-page block is reliable again.** Two defects, both device-reported 2026-10-08: the
+  cover's bounds could be read from an off-screen copy of a node (Instagram keeps other tabs' pages
+  attached, so a duplicate can sit ahead of the live one — the cover then never appeared, especially
+  right after switching from the Profile tab), and after closing a long-press menu on the Search page
+  the cover was not re-armed for good (the menu's own open had set the 2-second debounce the close
+  needed to elapse, and a settled suggestion grid fires nothing). Bounds now come from the first
+  VISIBLE match, and a window change always re-asks the cover question. The Explore cover, the Reels
+  tab cover and the home-feed cover all share both fixes.
+
 ### Changed
 - **The daily 2-minute pass is now OFF by default.** It is an opt-in escape hatch: enable it in
   Settings if you want one 2-minute window per day. Existing installs keep whatever they had set;

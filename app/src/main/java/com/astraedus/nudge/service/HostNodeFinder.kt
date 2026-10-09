@@ -81,18 +81,36 @@ object HostNodeFinder {
      *
      * Those three lines — allocate, `getBoundsInScreen`, read four fields — are the genuinely
      * untestable RESIDUE, isolated here exactly as `docs/TESTING.md` prescribes: one field-copying
-     * function, no logic. Do not write a test for it and do not reach for the default-values flag to
-     * make one possible. Everything with a decision in it — which strategy matched, the bounded
-     * walk, the validation — is either tested here or tested in [TabCoverPlacement.of].
+     * function, no logic. Which NODE is read is a decision, and it is tested: `Rect` field writes
+     * need no android implementation (the fact `TabCoverOverlayManager`'s tests stand on), so the
+     * two findPlacement tests distinguish their nodes by their rectangles. Everything else with a
+     * decision in it — which strategy matched, the bounded walk, the validation — is either tested
+     * here or tested in [TabCoverPlacement.of].
+     *
+     * ## THE VISIBLE MATCH, NOT THE FIRST MATCH (2026-10-08 report family)
+     *
+     * A host app that keeps other pages attached (Instagram) can duplicate an id: an off-screen
+     * copy of a node sits in the tree alongside the live one, and the framework's hit list order is
+     * tree order, not visibility. `findPlacement` used to read `nodes[0]`, and on a settled Search
+     * page — Profile still attached from the switch that got there — that first hit's junk bounds
+     * were rejected by [TabCoverPlacement.of], so the Explore cover never armed while the
+     * markers line beside it said `tab_bar visible=true`, because [markerDiagnostics] checks
+     * `any { it.isVisibleToUser }`. The cover's own lookup now obeys the same law the observation
+     * already obeys ([presentViewIds]'s "presence is not on-screen"): the first VISIBLE match wins,
+     * and an id whose every match is off screen places nothing. An invisible node's bounds are a
+     * rectangle the user cannot see — worst case REAL-looking ones, which would paint a cover
+     * somewhere nobody is looking; a cover drawn in the wrong place is worse than no cover.
      */
     fun findPlacement(root: AccessibilityNodeInfo, locator: NodeLocator): TabCoverPlacement? = try {
         val nodes = matchesFor(root, locator)
-        if (nodes.isEmpty()) {
+        val onScreen = nodes.firstOrNull { it.isVisibleToUser }
+        if (onScreen == null) {
+            recycleNodes(nodes)
             null
         } else {
             // The residue. Four field reads off one node; TabCoverPlacement.of owns the validation.
             val bounds = Rect()
-            nodes[0].getBoundsInScreen(bounds)
+            onScreen.getBoundsInScreen(bounds)
             val placement = TabCoverPlacement.of(bounds.left, bounds.top, bounds.right, bounds.bottom)
             recycleNodes(nodes)
             placement
@@ -290,7 +308,12 @@ object HostNodeFinder {
             val present = nodes.isNotEmpty()
             val visible = nodes.any { it.isVisibleToUser }
             recycleNodes(nodes)
-            "${id.substringAfterLast(":id/")} present=$present visible=$visible"
+            // `matches=` is the 2026-10-08 addition: `present=true visible=true matches=2` is an
+            // attached duplicate sitting ahead of the live node in tree order — the exact shape
+            // that made the first-hit lookup place nothing while this line still said visible.
+            // Without the count, "visible=true" cannot tell one live node from a live node plus a
+            // ghost, and the next phone report cannot say which one the cover read.
+            "${id.substringAfterLast(":id/")} present=$present visible=$visible matches=${nodes.size}"
         }
     } catch (_: Exception) {
         emptyList()

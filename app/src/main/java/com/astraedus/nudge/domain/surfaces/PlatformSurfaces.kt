@@ -87,6 +87,30 @@ interface PlatformSurfaces {
      */
     val contentCovers: Map<String, ContentCoverSpec>
         get() = emptyMap()
+
+    /**
+     * Every id the DEBUG readout (`SurfaceInspector`, via `HostNodeFinder.markerDiagnostics`) should
+     * report `present=/visible=/matches=` for: the classifier's markers, the vanishable tabs, and
+     * every content-cover spec node — top, fallback and bottom.
+     *
+     * DERIVED from the adapter's own declarations, never hand-listed, so a cover added tomorrow is
+     * diagnosable from the phone the day it ships, and this list can never drift from the selectors
+     * it exists to explain. Exists for the 2026-10-08 report family: a content cover can fail to arm
+     * with its gate passing and its ids present in the tree, and the facts that separate the three
+     * causes (a renamed id; an attached off-screen duplicate ahead of the live node; a single node
+     * that is present but not visible) are per-id present/visible/match-count — facts the phone-side
+     * readout is the only place a user in the field can reach.
+     */
+    val diagnosticViewIds: Set<String>
+        get() = buildSet {
+            addAll(classifierViewIds)
+            vanishableTabs.values.forEach { locator -> addAll(locator.viewIds) }
+            contentCovers.values.forEach { spec ->
+                addAll(spec.top.viewIds)
+                spec.topFallback?.viewIds?.let(::addAll)
+                addAll(spec.bottom.viewIds)
+            }
+        }
 }
 
 /**

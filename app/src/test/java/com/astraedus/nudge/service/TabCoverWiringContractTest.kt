@@ -127,7 +127,17 @@ class TabCoverWiringContractTest {
      */
     @Test
     fun `surface maintenance rides the existing tree read`() {
-        val body = bodyOf("private fun detectAndEvaluateFeature(packageName: String)")
+        // The signature itself (multi-line in the source): the window flag needs its default, or
+        // the content-change path's plain call stops compiling / stops meaning "debounced".
+        val detectStart = code.indexOf("private fun detectAndEvaluateFeature(")
+        assertTrue("detectAndEvaluateFeature must exist", detectStart >= 0)
+        assertTrue(
+            "the window flag must have a default so the content-change path's plain call keeps " +
+                "meaning 'debounced'",
+            code.substring(detectStart, detectStart + 200).contains("fromWindowChange: Boolean = false")
+        )
+
+        val body = bodyOf("private fun detectAndEvaluateFeature(")
         assertTrue(
             "detectAndEvaluateFeature must call maintainHostSurfaces with the rootNode it already " +
                 "read. Got:\n$body",

@@ -265,6 +265,46 @@ class InstagramSurfacesFixtureTest {
     }
 
     /**
+     * The readout's marker lines must cover the COVER's own nodes, not only the classifier's.
+     *
+     * The 2026-10-08 report family: the Search cover failed to arm with its gate passing, and the
+     * phone readout could not say why — its marker lines listed only classifier ids, so the one id
+     * whose present/visible/matches would have named the cause (`action_bar_search_edit_text`, or a
+     * duplicated `tab_bar`) was never reported. `diagnosticViewIds` derives the union from the
+     * adapter's own declarations, so this test only has to pin the load-bearing members to keep
+     * the derivation honest.
+     */
+    @Test
+    fun `the diagnostic ids include the cover nodes, not only the classifier markers`() {
+        val diagnostics = InstagramSurfaces.diagnosticViewIds
+
+        // The classifier's markers — the pre-2026-10-08 readout was this set alone.
+        listOf(
+            InstagramSurfaces.ID_TITLE_LOGO,
+            InstagramSurfaces.ID_TAB_BAR,
+            InstagramSurfaces.ID_STICKY_HEADER_LIST
+        ).forEach { id ->
+            assertTrue("classifier marker $id must be diagnosable", id in diagnostics)
+        }
+
+        // The vanishable tab...
+        assertTrue(InstagramSurfaces.ID_CLIPS_TAB in diagnostics)
+
+        // ...and every content-cover node: both REELS tops (tray + scrolled-away fallback) and the
+        // EXPLORE top — the id the 16:44/16:46 captures were about — and their bottoms.
+        val reels = InstagramSurfaces.contentCovers.getValue("REELS")
+        assertTrue(reels.top.viewIds.first() in diagnostics)
+        assertTrue(reels.topFallback!!.viewIds.first() in diagnostics)
+        val explore = InstagramSurfaces.contentCovers.getValue("EXPLORE")
+        assertTrue(
+            "the Search cover's own top node must be in the diagnostic set: it is the one whose " +
+                "present/visible/matches line names the cause when the cover will not arm",
+            explore.top.viewIds.first() in diagnostics
+        )
+        assertTrue(explore.bottom.viewIds.first() in diagnostics)
+    }
+
+    /**
      * CORRECTION of a claim this file used to make. The tab FRAMES never report selection, but the
      * ACTIVE tab's `tab_icon` child does: `home.xml` was recorded on the Home tab, and exactly one
      * of the `tab_icon` nodes is selected — inside `feed_tab`. That is the signal the Search cover's

@@ -56,11 +56,13 @@ screen (no nav bar, keyboard up) has no cover at all. Explore has no detector, s
 | Is a cover wanted right now | `BlockDecision.Block.tabVanish`, set from the rule that DECIDED the block |
 | Where a tab cover goes | `TabCoverPlacement.of(bounds)` (pure; null for degenerate bounds) |
 | Where a region cover goes | `ContentCoverPlacement.of(top, bottom)` (pure; null unless both nodes resolve) |
+| WHICH matching node the bounds come from | `HostNodeFinder.findPlacement` — the first VISIBLE match, never `nodes[0]` |
 | Which tab is active (the classifier's page gate, and the Search cover's gate) | `HostNodeFinder.activeTab` + `PlatformSurfaces.activeTabs`/`activeTabIndicatorId`, carried on `SurfaceObservation.activeTab` |
 | Show, move, hide or leave alone | `TabCoverDecider` (pure) |
 | Is the cover still valid at all | `TabCoverPresence.shouldKeep(signal, coveredPackage)` (pure, exhaustive over `ForegroundSignal`) |
 | The windows themselves | `service/TabCoverOverlayManager`, keyed by feature (tab key vs `feature|content`) |
 | Turning a locator into a node | `service/HostNodeFinder` — the only place that does node lookups for this feature |
+| Which ids the phone-side readout reports | `PlatformSurfaces.diagnosticViewIds` (derived: markers + tabs + every cover node) |
 
 Three constraints that are not obvious and are each a bug already paid for elsewhere in this repo:
 
@@ -92,6 +94,43 @@ choice at the end of it, and the tab has to stay tappable to reach the interstit
 The flag is read off the rule that DECIDED the block, not `applicableRules.any { it.tabVanish }`. With `any {}` a
 user who switched the cover off on their Reels rule would still get it from some unrelated rule still carrying the
 default `true`.
+
+### Cover reliability: the two 2026-10-08 invariants
+
+Two device reports, same day, same symptom — the Search screen's cover sometimes failed to appear, and its
+`cover EXPLORE placement=null requested=false` line contradicted the `markers=` line beside it (`tab_bar
+present=true visible=true`). Both captures were on the settled Search page with the gate passing, and both were
+in trees that also carried the Profile page's ids from the switch that got there.
+
+**1. A cover's bounds come from the first VISIBLE match, never `nodes[0]`.** The framework's
+`findAccessibilityNodeInfosByViewId` hit list is tree order, not visibility, and Instagram's main activity keeps
+other pages attached — so a settled screen can carry an off-screen duplicate AHEAD of the live node.
+`findPlacement` used to read the first hit; its junk bounds were rejected by `TabCoverPlacement.of` (correct),
+which meant `placement=null`, the gate "failing", and no cover — while `markerDiagnostics` checked
+`any { it.isVisibleToUser }` and said the id was visible. The lookup now obeys the same law the observation
+already obeyed (presence is not on-screen): first VISIBLE match wins, all-invisible matches place nothing.
+An invisible node's REAL-looking bounds are the worst case a cover can draw — a rectangle somewhere the user
+is not looking. Pinned by `HostNodeFinderTest`'s two findPlacement tests, which fail on first-hit semantics.
+
+**2. A window change re-asks the cover question without waiting out the 2s debounce.** A host app's context
+menu (long-press a post, the ⋯ sheet) is its OWN window: the open fires a window change, the tick reads the
+menu alone (`logo-menu` fixture shape — 3 ids, no `tab_bar`), every cover gate fails on the blind read, and the
+decider tears the cover down. That is survivable only if the read on the menu's DISMISSAL re-arms it — but the
+open's own read had set the shared `contentChangedDebounceMs` clock, the close's window event landed inside the
+window, and a user then sitting on a static suggestion grid (no scrolling, no clicks) fires nothing: the block
+was gone for good. The 16:44 capture's last recorded tree was the menu, and no tick followed it.
+`detectAndEvaluateFeature(fromWindowChange = true)` — set by the `WINDOW_STATE_CHANGED`/`WINDOWS_CHANGED` branch
+only — always reads; the 26k-in-a-few-minutes content-change firehose still pays the debounce. Pinned by
+`EventDispatchOrderContractTest`'s window-bypass test: window branch passes the flag, content path does not,
+and the early return is actually gated on it.
+
+**Diagnostics that can name the cause.** The readout's marker lines now run over the adapter's own
+`diagnosticViewIds` — classifier markers, vanishable tabs, and every content-cover node — and each line carries
+`matches=N`: `present=true visible=true matches=2` is an attached duplicate sitting ahead of the live node,
+which is exactly the shape invariant 1 exists for, and `matches=0` is a renamed id. Without the count,
+"visible=true" cannot tell one live node from a live node plus a ghost — and the next phone report cannot say
+which one the cover read. (The 16:44 readout also showed why the diagnostic harvest must be deeper than the
+production bound: the real failure tree can outgrow it.)
 
 ## Following steer (removed)
 

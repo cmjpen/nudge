@@ -84,6 +84,11 @@ class SurfaceObserver @Inject constructor(
             // REAL host-app tree must survive, or the readout answers ids=0 exactly when someone is
             // trying to report a screen (device-hit 2026-10-07: the Search tab's readout was
             // clobbered this way).
+            //
+            // The marker lines are driven by the adapter's own `diagnosticViewIds` — classifier
+            // markers PLUS every cover spec node — so a cover that fails to arm with its gate
+            // passing (device-reported 2026-10-08, twice) can be explained from the phone: which of
+            // its ids was absent, invisible, or duplicated by an attached page.
             val diagnosticIds = present + HostNodeFinder.harvestViewIds(
                 root,
                 prefix = "${surfaces.packageName}:id/",
@@ -96,7 +101,7 @@ class SurfaceObserver @Inject constructor(
                     viewIds = diagnosticIds,
                     activeTab = activeTab,
                     tabStates = HostNodeFinder.tabIconStates(root, surfaces),
-                    markers = HostNodeFinder.markerDiagnostics(root, surfaces.classifierViewIds),
+                    markers = HostNodeFinder.markerDiagnostics(root, surfaces.diagnosticViewIds),
                     nowMs = System.currentTimeMillis()
                 )
             }

@@ -1324,12 +1324,14 @@ class NudgeAccessibilityService : AccessibilityService() {
                 // The two event paths must ask the same two questions; the content-change path
                 // (below) has always run both, and this is the arrival path catching up.
                 //
-                // Safe to run here even though the tree may still be transitioning: the content
-                // read is debounced per package (`contentChangedDebounceMs`), detection fails soft
-                // to null, and a null changes nothing. `handleWindowContentChanged` will ask again
-                // when the surface settles if this attempt saw it mid-flight.
+                // Safe to run here even though the tree may still be transitioning: detection fails
+                // soft to null, and a null changes nothing. `handleWindowContentChanged` will ask
+                // again when the surface settles if this attempt saw it mid-flight. The window flag
+                // is the 2026-10-08 rule in `detectAndEvaluateFeature`'s doc: an arrival — or a
+                // sub-window's DISMISSAL — is "the screen changed", never firehose to be debounced,
+                // or a menu that hid the cover becomes the last read and nothing re-arms it.
                 if (packageName in InAppDetector.SUPPORTED_PACKAGES) {
-                    detectAndEvaluateFeature(packageName)
+                    detectAndEvaluateFeature(packageName, fromWindowChange = true)
                 }
             }
 
@@ -2115,16 +2117,37 @@ class NudgeAccessibilityService : AccessibilityService() {
      * to run `evaluateForegroundPackage` alone, so a Recents re-entry onto an in-app surface (the
      * Reels-equivalent home feed) evaluated no feature rules at all until something happened to
      * fire a content change. One surface, two entry points, same questions.
+     *
+     * ## The window path does not wait out the debounce (device-reported 2026-10-08)
+     *
+     * A host app's context menu / dialog is its OWN window: opening one fires a window change,
+     * `rootInActiveWindow` becomes the menu alone (the `logo-menu` fixture shape — 3 ids, no
+     * `tab_bar`), every cover gate fails on the blind read, and the cover is torn down. That is
+     * survivable ONLY if the read that follows the menu's DISMISSAL re-arms it — and with the
+     * shared debounce, the menu's own open-read had set the clock, the close's window event landed
+     * inside the 2s window, and the user then sat on a static grid that fires nothing: the block
+     * was gone for good (the 16:44 capture — its last recorded tree was the menu, and no tick
+     * followed it).
+     *
+     * So [fromWindowChange] events always read. The debounce exists for the 26k-a-few-minutes
+     * firehose, not for the rare event whose entire meaning is "the screen changed" — a window
+     * burst costs at most a handful of extra bounded reads per navigation, and the clock is still
+     * reset by the read so the firehose behind an arrival stays swallowed.
      */
-    private fun detectAndEvaluateFeature(packageName: String) {
+    private fun detectAndEvaluateFeature(
+        packageName: String,
+        fromWindowChange: Boolean = false
+    ) {
         // A nuked app is blocked WHOLE by `evaluateForegroundPackage`, which its caller has just run.
         // A feature-level evaluation on top would only launch the same Nuke block a second time under
         // a different confrontation key, and the Reels cover has nothing to do in an app the user
         // cannot be in.
         if (isNukedNow(packageName)) return
         val now = System.currentTimeMillis()
-        val lastTime = lastContentChangedTime[packageName] ?: 0L
-        if ((now - lastTime) < contentChangedDebounceMs) return
+        if (!fromWindowChange) {
+            val lastTime = lastContentChangedTime[packageName] ?: 0L
+            if ((now - lastTime) < contentChangedDebounceMs) return
+        }
         lastContentChangedTime[packageName] = now
 
         val rootNode = try { rootInActiveWindow } catch (_: Exception) { null } ?: return

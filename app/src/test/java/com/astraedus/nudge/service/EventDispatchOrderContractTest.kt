@@ -372,7 +372,7 @@ class EventDispatchOrderContractTest {
         val body = stripComments(source.substring(start, end))
 
         val wholeApp = body.indexOf("evaluateForegroundPackage(packageName)")
-        val feature = body.indexOf("detectAndEvaluateFeature(packageName)")
+        val feature = body.indexOf("detectAndEvaluateFeature(packageName, fromWindowChange = true)")
         assertTrue("an arrival must evaluate the whole-app rules", wholeApp >= 0)
         assertTrue(
             "an arrival into a host app must evaluate its in-app features too, or a Recents " +
@@ -382,6 +382,52 @@ class EventDispatchOrderContractTest {
         )
         assertTrue("the supported-package guard must stay, or every app arrival pays a tree read",
             body.contains("packageName in InAppDetector.SUPPORTED_PACKAGES"))
+    }
+
+    /**
+     * THE WINDOW PATH DOES NOT WAIT OUT THE CONTENT DEBOUNCE (device-reported 2026-10-08).
+     *
+     * A host app's context menu is its own window: the open fires a window change, the tick reads
+     * the menu alone (no `tab_bar`, every cover gate fails), and the cover is torn down. The read
+     * that re-arms it is the one on DISMISSAL -- which lands inside the 2s window the open's own
+     * read set, and the user then sits on a static grid that fires nothing. The capture's last
+     * recorded tree was the menu; no tick followed it. The fix is the `fromWindowChange` flag, and
+     * this pins all three halves of it: the window branch passes it, the content path does NOT
+     * (the firehose is what the debounce is for), and the early return is actually gated on it.
+     */
+    @Test
+    fun `window events bypass the content-change debounce but the firehose still pays it`() {
+        val detect = source.indexOf("private fun detectAndEvaluateFeature(")
+        assertTrue("detectAndEvaluateFeature must exist", detect >= 0)
+        val detectEnd = source.indexOf("    private fun ", detect + 1)
+        val detectBody = stripComments(source.substring(detect, if (detectEnd > detect) detectEnd else source.length))
+        assertTrue(
+            "the debounce early-return must sit under the fromWindowChange guard, or the flag is a " +
+                "parameter nobody reads. Got:\n$detectBody",
+            detectBody.contains("if (!fromWindowChange) {")
+        )
+
+        val windowBranch = run {
+            val start = source.indexOf("A11yEventType.WINDOW_STATE_CHANGED,")
+            val end = source.indexOf("A11yEventType.WINDOW_CONTENT_CHANGED ->", start)
+            stripComments(source.substring(start, end))
+        }
+        assertTrue(
+            "the window branch must pass fromWindowChange = true",
+            windowBranch.contains("detectAndEvaluateFeature(packageName, fromWindowChange = true)")
+        )
+
+        val contentPath = run {
+            val start = source.indexOf("private fun handleWindowContentChanged(")
+            assertTrue("handleWindowContentChanged must exist", start >= 0)
+            val end = source.indexOf("    private fun ", start + 1)
+            stripComments(source.substring(start, if (end > start) end else source.length))
+        }
+        assertTrue(
+            "the content-change path must keep the default (debounced) call -- the firehose is " +
+                "what the debounce exists for",
+            contentPath.contains("detectAndEvaluateFeature(packageName)")
+        )
     }
 
     /**
